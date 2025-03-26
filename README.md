@@ -28,7 +28,7 @@ A professional Telegram bot for managing a VPN subscription service with payment
 1. **Clone the repository**
 
    ```bash
-   git clone https://github.com/yourusername/blurnet.git
+   git clone https://github.com/frechezz/blurnet.git
    cd blurnet
    ```
 
@@ -114,4 +114,3 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 For support or inquiries, reach out to:
 - Telegram: [@blurnet_support](https://t.me/blurnet_support)
 - Updates: [@blurnet_news](https://t.me/blurnet_news)
-```
