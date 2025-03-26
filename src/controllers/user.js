@@ -7,6 +7,7 @@ const {
 const { SUBSCRIPTION_URL } = require("../config");
 const { TARIFFS } = require("../constants/tariffs");
 const api = require("../services/api"); // Импортируем наш API сервис
+const { hasUsedTrial, markTrialUsed } = require("../data/users");
 
 /**
  * Handles the /start command
@@ -88,12 +89,27 @@ async function handleRules(ctx) {
 async function handleTariffSelection(ctx, tariffKey) {
   const tariff = TARIFFS[tariffKey];
   ctx.session.tariff = tariff.name;
+  const userId = ctx.from.id;
+
+  // Импортируем функции для работы с данными пользователей
+  const { hasUsedTrial, markTrialUsed } = require("../data/users");
 
   if (tariffKey === "tariff_trial") {
-    // Для пробного периода сразу создаем пользователя без оплаты
-    const userId = ctx.from.id;
-    const username = `tg_${userId}_${Math.floor(Math.random() * 1000)}`;
+    // Проверяем, использовал ли пользователь пробный период ранее
+    if (hasUsedTrial(userId)) {
+      return await ctx.reply(
+        "❌ <b>Вы уже использовали пробный период</b>\n\n" +
+          "Каждый пользователь может воспользоваться пробным периодом только один раз.\n\n" +
+          "Пожалуйста, выберите один из платных тарифов:",
+        {
+          parse_mode: "HTML",
+          reply_markup: require("../keyboards").getTariffsInlineKeyboard(),
+        },
+      );
+    }
 
+    // Для пробного периода создаем пользователя без оплаты
+    const username = `tg_${userId}_${Math.floor(Math.random() * 1000)}`;
     let subscriptionUrl = SUBSCRIPTION_URL; // Дефолтный URL
 
     try {
@@ -105,6 +121,9 @@ async function handleTariffSelection(ctx, tariffKey) {
       if (userResponse.subscriptionUrl) {
         subscriptionUrl = userResponse.subscriptionUrl;
       }
+
+      // Отмечаем пользователя как использовавшего пробный период ТОЛЬКО после успешного API-вызова
+      markTrialUsed(userId, ctx.from.username || `user_${userId}`);
 
       await ctx.reply(
         "<b>Пробный период активирован</b> ✅\n\n" +
@@ -130,14 +149,14 @@ async function handleTariffSelection(ctx, tariffKey) {
         apiError,
       );
 
-      // Отправляем сообщение без упоминания ошибки API
+      // Отправляем сообщение об ошибке пользователю
       await ctx.reply(
-        "<b>Пробный период активирован</b> ✅\n\n" +
-          "Переходите по ссылке и следуйте инструкции по подключению\n\n" +
-          `👀 <a href='${subscriptionUrl}'>Подписка</a>`,
+        "❌ <b>Ошибка при активации пробного периода</b>\n\n" +
+          "К сожалению, произошла техническая ошибка при активации пробного периода.\n" +
+          "Пожалуйста, попробуйте позже или выберите один из платных тарифов.\n\n" +
+          "Если проблема повторяется, обратитесь в поддержку: @blurnet_support",
         {
           parse_mode: "HTML",
-          disable_web_page_preview: true,
           reply_markup: require("../keyboards").getReturnTariffInlineKeyboard(),
         },
       );
@@ -145,13 +164,14 @@ async function handleTariffSelection(ctx, tariffKey) {
       // Notify admin about error
       await ctx.api.sendMessage(
         require("../config").ADMIN_ID,
-        `Ошибка при создании пользователя с пробным периодом!\n` +
+        `⚠️ Ошибка при создании пользователя с пробным периодом!\n` +
           `Пользователь: ${ctx.from.username ? "@" + ctx.from.username : "не указан"}\n` +
           `ID: ${ctx.from.id}\n` +
           `Ошибка: ${apiError.message}`,
       );
     }
   } else {
+    // Обработка платных тарифов
     await ctx.reply(tariff.message, {
       reply_markup: require("../keyboards").getPaymentInlineKeyboard(),
     });
