@@ -88,7 +88,7 @@ class RemnavaveAPI {
           username: username,
           telegramId: telegramId,
           trafficLimitBytes: tariffParams.trafficLimitBytes,
-          trafficLimitStrategy: "NO_RESET", // или другая стратегия в зависимости от тарифа
+          trafficLimitStrategy: "MONTH", // или другая стратегия в зависимости от тарифа
           expireAt: tariffParams.expireAt,
           status: "ACTIVE",
           activateAllInbounds: true, // Или указать конкретный инбаунд через activeUserInbounds: [this.inboundUuid]
