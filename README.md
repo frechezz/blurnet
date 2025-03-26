@@ -51,6 +51,12 @@ A professional Telegram bot for managing a VPN subscription service with payment
    ```
    BOT_API_KEY=your_telegram_bot_token
    ADMIN_ID=your_telegram_id
+   SUBSCRIPTION_URL=suburl
+   SUPPORT_URL=supporturl
+   NEWS_URL=newsurl
+   COOKIE=cookie
+   USERNAME=username
+   PASSWORD=password
    ```
 
 4. **Start the bot**

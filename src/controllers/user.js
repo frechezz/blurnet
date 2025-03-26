@@ -6,6 +6,7 @@ const {
 } = require("../keyboards");
 const { SUBSCRIPTION_URL } = require("../config");
 const { TARIFFS } = require("../constants/tariffs");
+const api = require("../services/api"); // Импортируем наш API сервис
 
 /**
  * Handles the /start command
@@ -89,24 +90,67 @@ async function handleTariffSelection(ctx, tariffKey) {
   ctx.session.tariff = tariff.name;
 
   if (tariffKey === "tariff_trial") {
-    await ctx.reply(
-      "<b>Пробный период активирован</b> ✅\n\n" +
-        "Переходите по ссылке и следуйте инструкции по подключению\n\n" +
-        `👀 <a href='${SUBSCRIPTION_URL}'>Подписка</a>`,
-      {
-        parse_mode: "HTML",
-        disable_web_page_preview: true,
-        reply_markup: require("../keyboards").getReturnTariffInlineKeyboard(),
-      },
-    );
+    // Для пробного периода сразу создаем пользователя без оплаты
+    const userId = ctx.from.id;
+    const username = `tg_${userId}_${Math.floor(Math.random() * 1000)}`;
 
-    // Notify admin
-    await ctx.api.sendMessage(
-      require("../config").ADMIN_ID,
-      `Новый пользователь активировал пробный период!\n` +
-        `Пользователь: ${ctx.from.username ? "@" + ctx.from.username : "не указан"}\n` +
-        `ID: ${ctx.from.id}`,
-    );
+    let subscriptionUrl = SUBSCRIPTION_URL; // Дефолтный URL
+
+    try {
+      // Создаем пользователя в системе через API
+      const userResponse = await api.createUser(username, userId, tariff.name);
+      console.log("Пользователь с пробным периодом создан:", userResponse.uuid);
+
+      // Получаем персональную ссылку на подписку пользователя
+      if (userResponse.subscriptionUrl) {
+        subscriptionUrl = userResponse.subscriptionUrl;
+      }
+
+      await ctx.reply(
+        "<b>Пробный период активирован</b> ✅\n\n" +
+          "Переходите по ссылке и следуйте инструкции по подключению\n\n" +
+          `👀 <a href='${subscriptionUrl}'>Подписка</a>`,
+        {
+          parse_mode: "HTML",
+          disable_web_page_preview: true,
+          reply_markup: require("../keyboards").getReturnTariffInlineKeyboard(),
+        },
+      );
+
+      // Notify admin
+      await ctx.api.sendMessage(
+        require("../config").ADMIN_ID,
+        `Новый пользователь активировал пробный период!\n` +
+          `Пользователь: ${ctx.from.username ? "@" + ctx.from.username : "не указан"}\n` +
+          `ID: ${ctx.from.id}`,
+      );
+    } catch (apiError) {
+      console.error(
+        "Ошибка при создании пользователя с пробным периодом:",
+        apiError,
+      );
+
+      // Отправляем сообщение без упоминания ошибки API
+      await ctx.reply(
+        "<b>Пробный период активирован</b> ✅\n\n" +
+          "Переходите по ссылке и следуйте инструкции по подключению\n\n" +
+          `👀 <a href='${subscriptionUrl}'>Подписка</a>`,
+        {
+          parse_mode: "HTML",
+          disable_web_page_preview: true,
+          reply_markup: require("../keyboards").getReturnTariffInlineKeyboard(),
+        },
+      );
+
+      // Notify admin about error
+      await ctx.api.sendMessage(
+        require("../config").ADMIN_ID,
+        `Ошибка при создании пользователя с пробным периодом!\n` +
+          `Пользователь: ${ctx.from.username ? "@" + ctx.from.username : "не указан"}\n` +
+          `ID: ${ctx.from.id}\n` +
+          `Ошибка: ${apiError.message}`,
+      );
+    }
   } else {
     await ctx.reply(tariff.message, {
       reply_markup: require("../keyboards").getPaymentInlineKeyboard(),

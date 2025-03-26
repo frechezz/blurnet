@@ -52,11 +52,27 @@ function getReturnTariffInlineKeyboard() {
  * Creates an admin keyboard for payment approval
  */
 function getAdminInlineKeyboard(userId, tariff) {
-  const encodedTariff = tariff.replace(/[^a-zA-Z0-9]/g, "_");
+  console.log(
+    "Creating admin keyboard with userId:",
+    userId,
+    "and tariff:",
+    tariff,
+  );
+
+  // Проверка на пустой тариф
+  if (!tariff || tariff === "Тариф не указан") {
+    tariff = "🥉1 месяц"; // Устанавливаем дефолтный тариф
+    console.log("Using default tariff:", tariff);
+  }
+
+  // Вместо кодирования тарифа, используйте base64
+  const encodedTariff = Buffer.from(tariff).toString("base64");
+  console.log("Encoded tariff:", encodedTariff);
+
   return new InlineKeyboard()
     .row()
-    .text("✅ Подтвердить", `approve_${userId}_${encodedTariff}`)
-    .text("❌ Отклонить", `reject_${userId}_${encodedTariff}`);
+    .text("✅ Подтвердить", `approve:${userId}:${encodedTariff}`)
+    .text("❌ Отклонить", `reject:${userId}:${encodedTariff}`);
 }
 
 /**
@@ -65,8 +81,8 @@ function getAdminInlineKeyboard(userId, tariff) {
 function getInstructionInlineKeyboard() {
   return new InlineKeyboard()
     .row()
-    .url("Сапорт", "https://t.me/blurnet_support")
-    .url("Новости", "https://t.me/blurnet_news");
+    .url("Сапорт", process.env.SUPPORT_URL)
+    .url("Новости", process.env.NEWS_URL);
 }
 
 module.exports = {

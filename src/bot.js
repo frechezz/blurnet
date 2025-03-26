@@ -88,22 +88,50 @@ bot.on("callback_query", async (ctx) => {
     }
     // Admin approval/rejection handlers
     else if (
-      callbackData.startsWith("approve_") ||
-      callbackData.startsWith("reject_")
+      callbackData.startsWith("approve:") ||
+      callbackData.startsWith("reject:")
     ) {
       if (userId !== Number(ADMIN_ID)) {
         throw new Error("У вас нет прав для этого действия");
       }
 
-      const [action, targetUserId, encodedTariff] = callbackData.split("_");
-      const tariff = encodedTariff.replace(/_/g, " ");
+      // Используем разделитель ":" вместо "_"
+      const [action, targetUserId, encodedTariff] = callbackData.split(":");
 
-      if (action === "approve") {
-        await handleApproval(ctx, bot, Number(targetUserId), tariff);
-        await ctx.answerCallbackQuery({ text: "Платеж подтвержден" });
-      } else if (action === "reject") {
-        await handleRejection(ctx, bot, Number(targetUserId), tariff);
-        await ctx.answerCallbackQuery({ text: "Платеж отклонен" });
+      // Добавляем подробное логирование
+      console.log("Callback data:", callbackData);
+      console.log("Action:", action);
+      console.log("Target User ID:", targetUserId);
+      console.log("Encoded Tariff:", encodedTariff);
+
+      // Проверяем, что encodedTariff определен
+      if (!encodedTariff) {
+        console.error("ERROR: encodedTariff is undefined!");
+        await ctx.answerCallbackQuery({
+          text: "Ошибка: Не удалось определить тариф",
+          show_alert: true,
+        });
+        return;
+      }
+
+      // Декодируем тариф из base64
+      try {
+        const tariff = Buffer.from(encodedTariff, "base64").toString();
+        console.log("Decoded Tariff:", tariff);
+
+        if (action === "approve") {
+          await handleApproval(ctx, bot, Number(targetUserId), tariff);
+          await ctx.answerCallbackQuery({ text: "Платеж подтвержден" });
+        } else if (action === "reject") {
+          await handleRejection(ctx, bot, Number(targetUserId), tariff);
+          await ctx.answerCallbackQuery({ text: "Платеж отклонен" });
+        }
+      } catch (error) {
+        console.error("Error decoding tariff:", error);
+        await ctx.answerCallbackQuery({
+          text: "Ошибка при обработке тарифа",
+          show_alert: true,
+        });
       }
     }
 
@@ -119,7 +147,6 @@ bot.on("callback_query", async (ctx) => {
     });
   }
 });
-
 // Media message handlers
 bot.on(["message:photo", "message:document"], handleReceipt);
 
