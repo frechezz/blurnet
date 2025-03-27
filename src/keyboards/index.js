@@ -1,22 +1,26 @@
 const { Keyboard, InlineKeyboard } = require("grammy");
+const config = require("../../config");
+const { getAllTariffs } = require("../constants/tariffs");
 
 /**
- * Creates the main menu keyboard
+ * Создает клавиатуру главного меню
+ * @returns {Keyboard} Клавиатура главного меню
  */
 function getMainKeyboard() {
   return new Keyboard()
     .row("Инструкция 📑")
-    .row("Начать работу с blurnet 🚀")
+    .row("Начать работу с " + config.service.name + " 🚀")
     .row("Правила использования")
     .placeholder("Выбери действие")
     .resized();
 }
 
 /**
- * Creates the tariff selection keyboard
+ * Создает клавиатуру выбора тарифа
+ * @returns {InlineKeyboard} Клавиатура выбора тарифа
  */
 function getTariffsInlineKeyboard() {
-  return new InlineKeyboard()
+  const keyboard = new InlineKeyboard()
     .row()
     .text("🏆12 месяцев", "tariff_year")
     .text("🥇6 месяцев", "tariff_halfyear")
@@ -27,10 +31,13 @@ function getTariffsInlineKeyboard() {
     .text("🌟 Пробный период", "tariff_trial")
     .row()
     .text("🔙 в главное меню", "back_main");
+
+  return keyboard;
 }
 
 /**
- * Creates the payment confirmation keyboard
+ * Создает клавиатуру подтверждения оплаты
+ * @returns {InlineKeyboard} Клавиатура подтверждения оплаты
  */
 function getPaymentInlineKeyboard() {
   return new InlineKeyboard()
@@ -40,7 +47,8 @@ function getPaymentInlineKeyboard() {
 }
 
 /**
- * Creates a keyboard to return to tariff selection
+ * Создает клавиатуру для возврата к выбору тарифа
+ * @returns {InlineKeyboard} Клавиатура возврата к тарифам
  */
 function getReturnTariffInlineKeyboard() {
   return new InlineKeyboard()
@@ -49,25 +57,14 @@ function getReturnTariffInlineKeyboard() {
 }
 
 /**
- * Creates an admin keyboard for payment approval
+ * Создает клавиатуру администратора для подтверждения платежа
+ * @param {number} userId - Идентификатор пользователя
+ * @param {string} tariff - Название тарифа
+ * @returns {InlineKeyboard} Клавиатура администратора
  */
 function getAdminInlineKeyboard(userId, tariff) {
-  console.log(
-    "Creating admin keyboard with userId:",
-    userId,
-    "and tariff:",
-    tariff,
-  );
-
-  // Проверка на пустой тариф
-  if (!tariff || tariff === "Тариф не указан") {
-    tariff = "🥉1 месяц"; // Устанавливаем дефолтный тариф
-    console.log("Using default tariff:", tariff);
-  }
-
-  // Вместо кодирования тарифа, используйте base64
+  // Encode tariff to base64
   const encodedTariff = Buffer.from(tariff).toString("base64");
-  console.log("Encoded tariff:", encodedTariff);
 
   return new InlineKeyboard()
     .row()
@@ -76,13 +73,14 @@ function getAdminInlineKeyboard(userId, tariff) {
 }
 
 /**
- * Creates a keyboard with support and news links
+ * Создает клавиатуру с поддержкой и новостями
+ * @returns {InlineKeyboard} Клавиатура с ссылками
  */
 function getInstructionInlineKeyboard() {
   return new InlineKeyboard()
     .row()
-    .url("Сапорт", process.env.SUPPORT_URL)
-    .url("Новости", process.env.NEWS_URL);
+    .url("Сапорт", config.urls.support)
+    .url("Новости", config.urls.news);
 }
 
 module.exports = {

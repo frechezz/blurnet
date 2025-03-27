@@ -1,180 +1,248 @@
+/**
+ * Контроллер для пользовательских функций
+ */
 const { PHOTO_IDS } = require("../constants/media");
+const messages = require("../constants/messages");
 const {
   getMainKeyboard,
   getInstructionInlineKeyboard,
   getTariffsInlineKeyboard,
+  getPaymentInlineKeyboard,
+  getReturnTariffInlineKeyboard,
 } = require("../keyboards");
-const { SUBSCRIPTION_URL } = require("../config");
-const { TARIFFS } = require("../constants/tariffs");
-const api = require("../services/api"); // Импортируем наш API сервис
+const { getTariff } = require("../constants/tariffs");
+const api = require("../api");
 const { hasUsedTrial, markTrialUsed } = require("../data/users");
+const logger = require("../utils/logger");
+const config = require("../../config");
 
 /**
- * Handles the /start command
+ * Обрабатывает команду /start
+ * @param {Context} ctx - Контекст бота
  */
 async function handleStart(ctx) {
-  await ctx.reply(
-    "Вы запустили <b>blurnet</b> 🙌🏻 - выгодный VPN для высших устройств без каких либо ограничений.\n\n" +
-      "Наш сервис поддерживает такие устройства как:\n" +
-      "- iOS\n" +
-      "- Android\n" +
-      "- MacOS\n" +
-      "- Windows\n\n" +
-      "Мы отличаемся от конкурентов тем, что мы используем высокоскоростные сервера (2.5 Гбит/с) и самое современное оборудование, а также не ведем никаких записей поисковых запросов, IP адресов, и остальных цифровых следов.\n\n" +
-      "Внимательно ознакомьтесь с инструкцией и начинайте!\n\n" +
-      "У нас как и у всех есть свои правила, следует их также прочитать и принять. ",
-    { parse_mode: "HTML", reply_markup: getMainKeyboard() },
-  );
+  try {
+    await ctx.reply(messages.welcome, {
+      parse_mode: "HTML",
+      reply_markup: getMainKeyboard(),
+    });
+    logger.info(`Пользователь ${ctx.from.id} запустил бота`);
+  } catch (error) {
+    logger.error(`Ошибка в handleStart: ${error.message}`);
+    await ctx.reply(messages.errors.general);
+  }
 }
 
 /**
- * Handles the "Instruction" button
+ * Обрабатывает нажатие кнопки "Инструкция"
+ * @param {Context} ctx - Контекст бота
  */
 async function handleInstruction(ctx) {
-  await ctx.replyWithPhoto(PHOTO_IDS.instruction, {
-    caption:
-      "<b>Инструкция:</b>\n" +
-      "<blockquote>1. Для управления ботом используйте кнопки\n" +
-      "2. Следуйте указаниям бота\n" +
-      "3. При возникновении проблем с оплатой обращайтесь: @blurnet_support 💳\n" +
-      "4. Все актуальные новости: @blurnet_news 📰</blockquote>",
-    parse_mode: "HTML",
-    reply_markup: getInstructionInlineKeyboard(),
-  });
+  try {
+    await ctx.replyWithPhoto(PHOTO_IDS.instruction, {
+      caption: messages.instruction,
+      parse_mode: "HTML",
+      reply_markup: getInstructionInlineKeyboard(),
+    });
+    logger.info(`Пользователь ${ctx.from.id} запросил инструкцию`);
+  } catch (error) {
+    logger.error(`Ошибка в handleInstruction: ${error.message}`);
+    await ctx.reply(messages.errors.general);
+  }
 }
 
 /**
- * Handles the "Start Work" button
+ * Обрабатывает нажатие кнопки "Начать работу"
+ * @param {Context} ctx - Контекст бота
  */
 async function handleStartWork(ctx) {
-  await ctx.replyWithPhoto(PHOTO_IDS.tariffs, {
-    caption:
-      "Выберите свой тарифный план:\n" +
-      "🏆12 месяцев - <b>Цена: 1000 ₽</b>\n" +
-      "🥇6 месяцев - <b>Цена: 550 ₽</b>\n" +
-      "🥈3 месяца - <b>Цена: 280 ₽</b>\n" +
-      "🥉1 месяц - <b>Цена: 100 ₽</b>\n\n" +
-      "🌟 Попробовать бесплатный пробный период на <b>5 дней</b>",
-    parse_mode: "HTML",
-    reply_markup: getTariffsInlineKeyboard(),
-  });
+  try {
+    await ctx.replyWithPhoto(PHOTO_IDS.tariffs, {
+      caption: messages.tariffs.selection,
+      parse_mode: "HTML",
+      reply_markup: getTariffsInlineKeyboard(),
+    });
+    logger.info(`Пользователь ${ctx.from.id} запросил тарифы`);
+  } catch (error) {
+    logger.error(`Ошибка в handleStartWork: ${error.message}`);
+    await ctx.reply(messages.errors.general);
+  }
 }
 
 /**
- * Handles the "Rules" button
+ * Обрабатывает нажатие кнопки "Правила использования"
+ * @param {Context} ctx - Контекст бота
  */
 async function handleRules(ctx) {
-  await ctx.replyWithPhoto(PHOTO_IDS.rules, {
-    caption:
-      "Правила использования <b>blurnet</b>\n" +
-      "<blockquote>1. <b>Запрещено использовать VPN для незаконной деятельности</b>\n" +
-      "Наш сервис предназначен для обеспечения конфиденциальности и безопасности, а не для обхода законов.\n\n" +
-      "2. <b>Не допускается использование для вредоносных действий</b>\n" +
-      "Запрещены DDoS-атаки, распространение вредоносного ПО, хакерские взломы и любые другие действия, наносящие вред третьим лицам.\n\n" +
-      "3. <b>Запрещена передача учетных данных третьим лицам</b>\n" +
-      "Аккаунт предоставляется только для личного использования. Распространение данных доступа может привести к блокировке.\n\n" +
-      "4. <b>Администрация оставляет за собой право ограничить доступ</b>\n" +
-      "В случае нарушения правил доступ к сервису может быть приостановлен без возврата средств.\n\n" +
-      "5. <b>Сервис работает без гарантий</b>\n" +
-      "Мы стремимся к стабильной работе, но не несем ответственности за возможные сбои, блокировки со стороны провайдеров или снижение скорости. (но при возникновении проблем мы обязательно постараемся их решить как можно быстрее)</blockquote>\n\n" +
-      "Используя <b>blurnet</b>, вы автоматически соглашаетесь с данными правилами.",
-    parse_mode: "HTML",
-    reply_markup: getMainKeyboard(),
-  });
+  try {
+    await ctx.replyWithPhoto(PHOTO_IDS.rules, {
+      caption: messages.rules,
+      parse_mode: "HTML",
+      reply_markup: getMainKeyboard(),
+    });
+    logger.info(`Пользователь ${ctx.from.id} запросил правила`);
+  } catch (error) {
+    logger.error(`Ошибка в handleRules: ${error.message}`);
+    await ctx.reply(messages.errors.general);
+  }
 }
 
 /**
- * Handles tariff selection
+ * Обрабатывает выбор тарифа
+ * @param {Context} ctx - Контекст бота
+ * @param {string} tariffKey - Ключ выбранного тарифа
  */
 async function handleTariffSelection(ctx, tariffKey) {
-  const tariff = TARIFFS[tariffKey];
-  ctx.session.tariff = tariff.name;
-  const userId = ctx.from.id;
-
-  // Импортируем функции для работы с данными пользователей
-  const { hasUsedTrial, markTrialUsed } = require("../data/users");
-
-  if (tariffKey === "tariff_trial") {
-    // Проверяем, использовал ли пользователь пробный период ранее
-    if (hasUsedTrial(userId)) {
-      return await ctx.reply(
-        "❌ <b>Вы уже использовали пробный период</b>\n\n" +
-          "Каждый пользователь может воспользоваться пробным периодом только один раз.\n\n" +
-          "Пожалуйста, выберите один из платных тарифов:",
-        {
-          parse_mode: "HTML",
-          reply_markup: require("../keyboards").getTariffsInlineKeyboard(),
-        },
-      );
+  try {
+    const tariff = getTariff(tariffKey);
+    if (!tariff) {
+      throw new Error("Неизвестный тариф");
     }
 
-    // Для пробного периода создаем пользователя без оплаты
+    // Сохраняем выбранный тариф в сессии
+    ctx.session.tariff = tariff.name;
+    const userId = ctx.from.id;
+
+    logger.info(
+      `Пользователь ${userId} выбрал тариф: ${tariff.name} (${tariffKey})`,
+    );
+
+    // Обработка пробного периода
+    if (tariffKey === "tariff_trial") {
+      await handleTrialActivation(ctx, userId, tariffKey);
+    } else {
+      // Обработка платных тарифов
+      await ctx.reply(tariff.message, {
+        reply_markup: getPaymentInlineKeyboard(),
+      });
+    }
+  } catch (error) {
+    logger.error(`Ошибка в handleTariffSelection: ${error.message}`);
+    await ctx.reply(messages.errors.general);
+  }
+}
+
+/**
+ * Обрабатывает активацию пробного периода
+ * @param {Context} ctx - Контекст бота
+ * @param {number} userId - ID пользователя
+ * @param {string} tariffKey - Ключ тарифа
+ */
+async function handleTrialActivation(ctx, userId, tariffKey) {
+  try {
+    // Проверяем, использовал ли пользователь пробный период ранее
+    if (hasUsedTrial(userId)) {
+      logger.info(
+        `Пользователь ${userId} пытается повторно активировать пробный период`,
+      );
+      await ctx.reply(messages.trial.already_used, {
+        parse_mode: "HTML",
+        reply_markup: getTariffsInlineKeyboard(),
+      });
+      return;
+    }
+
+    // Генерируем имя пользователя
     const username = `tg_${userId}_${Math.floor(Math.random() * 1000)}`;
-    let subscriptionUrl = SUBSCRIPTION_URL; // Дефолтный URL
+    logger.info(`Генерация имени пользователя: ${username}`);
 
     try {
       // Создаем пользователя в системе через API
-      const userResponse = await api.createUser(username, userId, tariff.name);
-      console.log("Пользователь с пробным периодом создан:", userResponse.uuid);
+      logger.info(
+        `Создание пользователя с пробным периодом: ${username}, тариф: ${tariffKey}`,
+      );
+      const userResponse = await api.createUser(username, userId, tariffKey);
+      logger.info(
+        `Пользователь с пробным периодом создан: ${userResponse.uuid}`,
+      );
 
-      // Получаем персональную ссылку на подписку пользователя
-      if (userResponse.subscriptionUrl) {
-        subscriptionUrl = userResponse.subscriptionUrl;
+      // Получаем URL подписки напрямую из ответа API
+      const subscriptionUrl = userResponse.subscriptionUrl;
+
+      if (subscriptionUrl) {
+        logger.info(`Получен URL подписки из API: ${subscriptionUrl}`);
+      } else {
+        logger.warn(`API не вернул subscriptionUrl для пробного периода`);
       }
 
-      // Отмечаем пользователя как использовавшего пробный период ТОЛЬКО после успешного API-вызова
+      // Отмечаем пользователя как использовавшего пробный период
       markTrialUsed(userId, ctx.from.username || `user_${userId}`);
 
+      // Отправляем сообщение об активации пробного периода
       await ctx.reply(
-        "<b>Пробный период активирован</b> ✅\n\n" +
-          "Переходите по ссылке и следуйте инструкции по подключению\n\n" +
-          `👀 <a href='${subscriptionUrl}'>Подписка</a>`,
+        messages.trial.activated +
+          (subscriptionUrl
+            ? `\n\n👀 <a href='${subscriptionUrl}'>Подписка</a>`
+            : ""),
         {
           parse_mode: "HTML",
           disable_web_page_preview: true,
-          reply_markup: require("../keyboards").getReturnTariffInlineKeyboard(),
+          reply_markup: getReturnTariffInlineKeyboard(),
         },
       );
 
-      // Notify admin
-      await ctx.api.sendMessage(
-        require("../config").ADMIN_ID,
-        `Новый пользователь активировал пробный период!\n` +
-          `Пользователь: ${ctx.from.username ? "@" + ctx.from.username : "не указан"}\n` +
-          `ID: ${ctx.from.id}`,
-      );
+      // Уведомление администратора
+      const adminMessage = messages.admin.trial_activated
+        .replace(
+          "{username}",
+          ctx.from.username ? "@" + ctx.from.username : "не указан",
+        )
+        .replace("{userId}", ctx.from.id);
+
+      await ctx.api.sendMessage(config.bot.adminId, adminMessage);
     } catch (apiError) {
-      console.error(
-        "Ошибка при создании пользователя с пробным периодом:",
-        apiError,
-      );
+      logger.error(`Ошибка при создании пробного периода: ${apiError.message}`);
 
       // Отправляем сообщение об ошибке пользователю
-      await ctx.reply(
-        "❌ <b>Ошибка при активации пробного периода</b>\n\n" +
-          "К сожалению, произошла техническая ошибка при активации пробного периода.\n" +
-          "Пожалуйста, попробуйте позже или выберите один из платных тарифов.\n\n" +
-          "Если проблема повторяется, обратитесь в поддержку: @blurnet_support",
-        {
-          parse_mode: "HTML",
-          reply_markup: require("../keyboards").getReturnTariffInlineKeyboard(),
-        },
-      );
+      await ctx.reply(messages.trial.error, {
+        parse_mode: "HTML",
+        reply_markup: getReturnTariffInlineKeyboard(),
+      });
 
-      // Notify admin about error
-      await ctx.api.sendMessage(
-        require("../config").ADMIN_ID,
-        `⚠️ Ошибка при создании пользователя с пробным периодом!\n` +
-          `Пользователь: ${ctx.from.username ? "@" + ctx.from.username : "не указан"}\n` +
-          `ID: ${ctx.from.id}\n` +
-          `Ошибка: ${apiError.message}`,
-      );
+      // Уведомление администратора об ошибке
+      const errorMessage = messages.admin.trial_error
+        .replace(
+          "{username}",
+          ctx.from.username ? "@" + ctx.from.username : "не указан",
+        )
+        .replace("{userId}", ctx.from.id)
+        .replace("{error}", apiError.message);
+
+      await ctx.api.sendMessage(config.bot.adminId, errorMessage);
     }
-  } else {
-    // Обработка платных тарифов
-    await ctx.reply(tariff.message, {
-      reply_markup: require("../keyboards").getPaymentInlineKeyboard(),
-    });
+  } catch (error) {
+    logger.error(`Ошибка в handleTrialActivation: ${error.message}`);
+    await ctx.reply(messages.errors.general);
+  }
+}
+
+/**
+ * Обрабатывает запрос на отправку платежной квитанции
+ * @param {Context} ctx - Контекст бота
+ */
+async function handlePaymentRequest(ctx) {
+  try {
+    await ctx.reply(messages.payment.send_receipt);
+    logger.info(`Пользователь ${ctx.from.id} запросил отправку квитанции`);
+  } catch (error) {
+    logger.error(`Ошибка в handlePaymentRequest: ${error.message}`);
+    await ctx.reply(messages.errors.general);
+  }
+}
+
+/**
+ * Обрабатывает отмену платежа и возврат к выбору тарифов
+ * @param {Context} ctx - Контекст бота
+ */
+async function handlePaymentCancel(ctx) {
+  try {
+    await handleStartWork(ctx);
+    logger.info(
+      `Пользователь ${ctx.from.id} отменил платеж и вернулся к выбору тарифов`,
+    );
+  } catch (error) {
+    logger.error(`Ошибка в handlePaymentCancel: ${error.message}`);
+    await ctx.reply(messages.errors.general);
   }
 }
 
@@ -184,4 +252,6 @@ module.exports = {
   handleStartWork,
   handleRules,
   handleTariffSelection,
+  handlePaymentRequest,
+  handlePaymentCancel,
 };
