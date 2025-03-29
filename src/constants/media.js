@@ -1,20 +1,28 @@
 /**
  * Media file IDs for fast access
  */
-const PHOTO_IDS = {
-  tariffs:
-    "AgACAgIAAxkDAAICdGfkYeX6pSis8rp2TCDaygW9ZWZOAALp7jEbN7IhS-JeiWKVefYqAQADAgADdwADNgQ",
-  instruction:
-    "AgACAgIAAxkDAAICdWfkYeZbwWPAb1PUcOnm4WLgNQ5_AALq7jEbN7IhS3NQKpH-W56AAQADAgADdwADNgQ",
-  payment_success:
-    "AgACAgIAAxkDAAICdmfkYecUZuv7eyzQ9M0-sKUkV8B_AALr7jEbN7IhS8qf-VbLbbSrAQADAgADdwADNgQ",
-  payment_rejected:
-    "AgACAgIAAxkDAAICd2fkYegeIX5D3XyYyGw5OaRrzBSNAALs7jEbN7IhS80EROhHs_SuAQADAgADdwADNgQ",
-  waiting:
-    "AgACAgIAAxkDAAICeGfkYel4289BsyWtqcylZbLYZhaAAALt7jEbN7IhS454wdpCPt1JAQADAgADdwADNgQ",
-  rules:
-    "AgACAgIAAxkDAAICeWfkYeoPBQ8ewTeon6bv2cwsJgK5AALu7jEbN7IhS1r3FbCn-RPsAQADAgADdwADNgQ",
+const { getSavedMediaIds } = require('../utils/media-manager');
+
+let PHOTO_IDS = getSavedMediaIds();
+
+const DEFAULT_PHOTO_IDS = {
+  tariffs: null,
+  instruction: null,
+  payment_success: null,
+  payment_rejected: null,
+  waiting: null,
+  rules: null,
 };
+
+PHOTO_IDS = { ...DEFAULT_PHOTO_IDS, ...PHOTO_IDS };
+
+/**
+ * Обновляет ID фотографий
+ * @param {Object} newIds - Новые ID фотографий
+ */
+function updatePhotoIds(newIds) {
+  PHOTO_IDS = { ...PHOTO_IDS, ...newIds };
+}
 
 /**
  * Получить ID фото по ключу
@@ -37,4 +45,5 @@ module.exports = {
   PHOTO_IDS,
   getPhotoId,
   getAllPhotoIds,
+  updatePhotoIds
 };

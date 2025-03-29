@@ -10,28 +10,27 @@ const {
   handleStartWork,
   handleRules,
   handleTariffSelection,
-  handlePaymentRequest, // Добавлены новые функции
-  handlePaymentCancel, // Добавлены новые функции
+  handlePaymentRequest,
+  handlePaymentCancel,
 } = require("./controllers/user");
 
 const {
   handleApproval,
   handleRejection,
-  handleGetUsers, // Добавлена новая функция
+  handleGetUsers,
 } = require("./controllers/admin");
 
 const { handleReceipt } = require("./controllers/payment");
 
-// Импорт клавиатур
-const { getMainKeyboard, getTariffsInlineKeyboard } = require("./keyboards");
 
 // Импорт middlewares
 const { logRequests } = require("./middlewares/logger");
 const { adminOnly } = require("./middlewares/auth");
 
 // Импорт утилит
-const { uploadMediaAndGetIds } = require("./utils/helpers");
 const ErrorHandler = require("./utils/error");
+const mediaManager = require("./utils/media-manager");
+const { updatePhotoIds } = require("./constants/media");
 
 // Инициализация бота
 const bot = new Bot(config.bot.token);
@@ -59,9 +58,10 @@ bot.command("start", async (ctx) => {
 bot.command("upload_photos", adminOnly, async (ctx) => {
   try {
     logger.info("Запуск загрузки фотографий администратором");
-    const fileIds = await uploadMediaAndGetIds(ctx);
-    logger.info("Загруженные медиа-файлы:", fileIds);
-    await ctx.reply("ID файлов были выведены в консоль.");
+    await ctx.reply("⚙️ Начинаю загрузку фотографий...");
+    const fileIds = await mediaManager.uploadAndSaveMediaIds(bot, ctx.from.id);
+    updatePhotoIds(fileIds); // Обновляем ID в текущей сессии
+    await ctx.reply("✅ Фотографии успешно загружены и ID сохранены!");
   } catch (error) {
     await ErrorHandler.handle(ctx, error, "command:upload_photos");
   }
@@ -187,12 +187,47 @@ bot.command("users", adminOnly, async (ctx) => {
   }
 });
 
+/**
+ * Инициализация медиа-файлов при запуске бота
+ * @returns {Promise<void>}
+ */
+async function initializeMedia() {
+  try {
+    logger.info("Начинаю инициализацию медиа-файлов...");
+    const mediaIds = await mediaManager.getOrUploadMediaIds(bot, config.bot.adminId);
+    updatePhotoIds(mediaIds);
+    logger.info("Медиа-файлы успешно инициализированы");
+    return true;
+  } catch (error) {
+    logger.error(`Ошибка при инициализации медиа-файлов: ${error.message}`);
+    return false;
+  }
+}
+
 // Глобальный обработчик ошибок
 bot.catch((err) => {
   logger.error("Необработанная ошибка бота:", err);
 });
 
-// Логируем готовность бота к работе
-logger.info(`Бот ${config.service.name} инициализирован и готов к запуску`);
+// Запуск бота с инициализацией медиа
+async function startBot() {
+  try {
+    logger.info(`Инициализация медиа-файлов...`);
+    await initializeMedia();
+    
+    logger.info(`Запуск бота ${config.service.name}...`);
+    await bot.start();
+    
+    logger.info(`Бот ${config.service.name} успешно запущен`);
+    return true;
+  } catch (error) {
+    logger.error(`Ошибка при запуске бота: ${error.message}`);
+    return false;
+  }
+}
 
-module.exports = { bot };
+// Модифицируем экспорт, чтобы предоставить доступ к функции запуска
+module.exports = {
+  bot,
+  startBot
+};
