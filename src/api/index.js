@@ -16,6 +16,7 @@ module.exports = {
     usersAPI.createUser(username, telegramId, tariffKey),
 
   getAllUsers: () => usersAPI.getAllUsers(),
+  getUserByTelegramId: (telegramId) => usersAPI.getUserByTelegramId(telegramId),
 
   // Для удобства можно добавить другие методы здесь
 };

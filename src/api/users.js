@@ -285,6 +285,41 @@ class UsersAPI {
   }
 
   /**
+   * Получить пользователя по Telegram ID
+   * @param {number|string} telegramId - Telegram ID пользователя
+   * @returns {Promise<Object>} Данные пользователя
+   */
+  async getUserByTelegramId(telegramId) {
+    // Используем обертку retryApiRequest
+    return this.processWithDelay(() => 
+      retryApiRequest(async () => {
+        try {
+          const token = await authAPI.getToken();
+          logger.info(`[API getUserByTelegramId] Запрос пользователя по TG ID: ${telegramId}`);
+          
+          const response = await axios.get(`${this.baseURL}/api/users/tg/${telegramId}`, {
+            headers: {
+              "Authorization": `Bearer ${token}`,
+              "Content-Type": "application/json",
+              "Cookie": config.api.cookie || "",
+            },
+            timeout: 10000, // Таймаут для запроса
+          });
+
+          if (!response.data || !response.data.response) {
+            throw new BlurnetApiError("Неверный формат ответа при получении пользователя по Telegram ID");
+          }
+
+          logger.info(`Успешно получены данные пользователя с TG ID: ${telegramId}`);
+          return response.data.response;
+        } catch (error) {
+          throw this.handleApiError(error, `получении пользователя по Telegram ID ${telegramId}`);
+        }
+      }, "getUserByTelegramId", 3, 1000) // 3 попытки, начальная задержка 1 сек
+    );
+  }
+
+  /**
    * Обработчик ошибок API для стандартизации и генерации специфических исключений
    * @param {Error} error Исходная ошибка
    * @param {string} operation Описание операции, во время которой произошла ошибка

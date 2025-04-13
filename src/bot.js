@@ -12,12 +12,14 @@ const {
   handleTariffSelection,
   handlePaymentRequest,
   handlePaymentCancel,
+  handleUserProfile,
 } = require("./controllers/user");
 
 const {
   handleApproval,
   handleRejection,
   handleGetUsers,
+  handleAllUsers,
 } = require("./controllers/admin");
 
 const { handleReceipt, stopInteractiveUpdates } = require("./controllers/payment");
@@ -104,6 +106,17 @@ bot.hears("Правила использования", async (ctx) => {
     await handleRules(ctx);
   } catch (error) {
     await ErrorHandler.handle(ctx, error, "hears:Правила");
+  }
+});
+
+// Обработка кнопки Личный кабинет
+bot.hears("Личный кабинет 👤", async (ctx) => {
+  try {
+    // Останавливаем предыдущие интерактивные обновления
+    stopInteractiveUpdates(ctx);
+    await handleUserProfile(ctx);
+  } catch (error) {
+    await ErrorHandler.handle(ctx, error, "hears:ЛичныйКабинет");
   }
 });
 
@@ -238,6 +251,15 @@ bot.command("users", adminOnly, async (ctx) => {
     await handleGetUsers(ctx);
   } catch (error) {
     await ErrorHandler.handle(ctx, error, "command:users");
+  }
+});
+
+// Команда /allusers (только для админа)
+bot.command("allusers", adminOnly, async (ctx) => {
+  try {
+    await handleAllUsers(ctx);
+  } catch (error) {
+    await ErrorHandler.handle(ctx, error, "command:allusers");
   }
 });
 

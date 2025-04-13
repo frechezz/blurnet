@@ -15,6 +15,9 @@ const api = require("../api");
 const { hasUsedTrial, markTrialUsed } = require("../data/users");
 const logger = require("../utils/logger");
 const config = require("../../config");
+const { addUser, getUserData, updateUser, getUsers } = require("../data/users");
+const bot = require("../bot");
+const { getAdminInlineKeyboard } = require("../keyboards/index");
 
 /**
  * Обрабатывает команду /start
@@ -375,6 +378,168 @@ async function handlePaymentCancel(ctx) {
   }
 }
 
+/**
+ * Обрабатывает запрос личного кабинета пользователя
+ * @param {Context} ctx - Контекст бота
+ */
+async function handleUserProfile(ctx) {
+  try {
+    const userId = ctx.from.id;
+    logger.info(`Пользователь ${userId} запросил личный кабинет`);
+    
+    // Показываем сообщение о загрузке
+    const loadingMsg = await ctx.reply("⏳ Загружаем данные вашего профиля...");
+    
+    try {
+      // Получаем данные пользователя через API
+      const userData = await api.getUserByTelegramId(userId);
+      
+      if (!userData || !userData.length) {
+        logger.warn(`Пользователь с Telegram ID ${userId} не найден в системе`);
+        await ctx.api.deleteMessage(loadingMsg.chat.id, loadingMsg.message_id);
+        await ctx.reply(
+          "😔 У вас пока нет активной подписки.\n\nЧтобы приобрести подписку, используйте меню «Начать работу с " + 
+          config.service.name + " 🚀»", 
+          { reply_markup: getMainKeyboard() }
+        );
+        return;
+      }
+      
+      // Формируем сообщение для пользователя с заголовком
+      let message = `👤 <b>Личный кабинет</b>\n\n`;
+      
+      // Информация о количестве найденных подписок
+      message += `📋 <b>Найдено подписок:</b> ${userData.length}\n\n`;
+      
+      // Обрабатываем каждую подписку
+      for (let i = 0; i < userData.length; i++) {
+        const user = userData[i];
+        
+        // Добавляем разделитель и номер подписки, если их несколько
+        if (userData.length > 1) {
+          message += `${i > 0 ? '\n' : ''}🔸 <b>Подписка #${i+1}</b>\n`;
+        }
+        
+        // Имя пользователя
+        message += `• <b>Логин:</b> ${user.username || "Не указан"}\n`;
+        
+        // Статус
+        const status = user.status === "ACTIVE" ? "✅ Активна" : "❌ Неактивна";
+        message += `• <b>Статус:</b> ${status}\n`;
+        
+        // Дата истечения подписки
+        if (user.expireAt) {
+          const expireDate = new Date(user.expireAt);
+          const now = new Date();
+          const daysLeft = Math.ceil((expireDate - now) / (1000 * 60 * 60 * 24));
+          
+          const formattedDate = expireDate.toLocaleDateString('ru-RU', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+          });
+          
+          if (daysLeft > 0) {
+            message += `• <b>Срок действия:</b> до ${formattedDate} (осталось ${daysLeft} дн.)\n`;
+          } else {
+            message += `• <b>Срок действия:</b> истёк ${formattedDate}\n`;
+          }
+        } else {
+          message += `• <b>Срок действия:</b> Бессрочно\n`;
+        }
+        
+        // Использованный трафик
+        if (typeof user.usedTrafficBytes === 'number') {
+          const usedTrafficGB = (user.usedTrafficBytes / (1024 * 1024 * 1024)).toFixed(2);
+          
+          if (typeof user.trafficLimitBytes === 'number' && user.trafficLimitBytes > 0) {
+            const totalTrafficGB = (user.trafficLimitBytes / (1024 * 1024 * 1024)).toFixed(2);
+            message += `• <b>Трафик:</b> ${usedTrafficGB} GB из ${totalTrafficGB} GB\n`;
+          } else {
+            message += `• <b>Использовано трафика:</b> ${usedTrafficGB} GB (безлимитный)\n`;
+          }
+        }
+        
+        // Дата создания
+        if (user.createdAt) {
+          const createDate = new Date(user.createdAt).toLocaleDateString('ru-RU', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+          });
+          message += `• <b>Дата создания:</b> ${createDate}\n`;
+        }
+        
+        // URL подписки
+        if (user.subscriptionUrl) {
+          message += `• <b>Ссылка:</b> <a href="${user.subscriptionUrl}">Открыть подписку</a>\n`;
+        } else {
+          message += `• <b>Ссылка:</b> Не найдена\n`;
+        }
+      }
+      
+      // Добавляем инструкцию в конце
+      message += `\n<i>Используйте ссылки на подписки, чтобы настроить VPN на ваших устройствах.</i>`;
+      
+      // Удаляем сообщение о загрузке
+      await ctx.api.deleteMessage(loadingMsg.chat.id, loadingMsg.message_id);
+      
+      // Проверяем размер сообщения и разбиваем при необходимости
+      if (message.length > 4000) {
+        // Разбиваем сообщение на части
+        const parts = [];
+        let currentPart = "";
+        const lines = message.split('\n');
+        
+        for (const line of lines) {
+          if (currentPart.length + line.length + 1 > 4000) {
+            parts.push(currentPart);
+            currentPart = line;
+          } else {
+            currentPart += (currentPart ? '\n' : '') + line;
+          }
+        }
+        
+        if (currentPart) {
+          parts.push(currentPart);
+        }
+        
+        // Отправляем части сообщения
+        for (let j = 0; j < parts.length; j++) {
+          const isLastPart = j === parts.length - 1;
+          await ctx.reply(parts[j], { 
+            parse_mode: "HTML",
+            reply_markup: isLastPart ? getMainKeyboard() : undefined
+          });
+        }
+      } else {
+        // Отправляем сообщение
+        await ctx.reply(message, { 
+          parse_mode: "HTML",
+          reply_markup: getMainKeyboard()
+        });
+      }
+      
+    } catch (apiError) {
+      logger.error(`Ошибка при получении данных пользователя ${userId}: ${apiError.message}`);
+      
+      // Удаляем сообщение о загрузке
+      await ctx.api.deleteMessage(loadingMsg.chat.id, loadingMsg.message_id);
+      
+      // Отправляем сообщение об ошибке
+      await ctx.reply(
+        "😔 Не удалось получить данные вашего профиля. Пожалуйста, попробуйте позже или обратитесь в поддержку.",
+        { reply_markup: getMainKeyboard() }
+      );
+    }
+  } catch (error) {
+    logger.error(`Ошибка в handleUserProfile: ${error.message}`);
+    await ctx.reply("Произошла ошибка при обработке запроса. Пожалуйста, попробуйте позже.", {
+      reply_markup: getMainKeyboard(),
+    });
+  }
+}
+
 module.exports = {
   handleStart,
   handleInstruction,
@@ -383,4 +548,5 @@ module.exports = {
   handleTariffSelection,
   handlePaymentRequest,
   handlePaymentCancel,
+  handleUserProfile,
 };

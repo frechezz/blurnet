@@ -337,8 +337,104 @@ async function handleGetUsers(ctx) {
   }
 }
 
+/**
+ * Получает краткую статистику всех пользователей
+ * @param {Context} ctx - Контекст бота
+ */
+async function handleAllUsers(ctx) {
+  try {
+    // Показываем сообщение о загрузке
+    const loadingMsg = await ctx.reply("⏳ Загрузка краткой статистики пользователей...");
+
+    // Получаем всех пользователей из API
+    let apiUsers = [];
+    try {
+      const apiResponse = await api.getAllUsers();
+      
+      if (apiResponse && apiResponse.users) {
+        apiUsers = apiResponse.users;
+        logger.info(`Получено ${apiUsers.length} пользователей из API`);
+      } else {
+        logger.warn("Ответ API не содержит массив пользователей");
+      }
+    } catch (apiError) {
+      logger.error(`Ошибка при получении пользователей из API: ${apiError.message}`);
+      await ctx.reply(`❌ Ошибка API: ${apiError.message}`);
+      try {
+        await ctx.api.deleteMessage(loadingMsg.chat.id, loadingMsg.message_id);
+      } catch {}
+      return;
+    }
+
+    // Статистические данные
+    const totalUsers = apiUsers.length;
+    const activeUsers = apiUsers.filter(user => user.status === "ACTIVE").length;
+    const expiredUsers = apiUsers.filter(user => 
+      user.status === "ACTIVE" && user.expireAt && new Date(user.expireAt) < new Date()
+    ).length;
+    
+    const usersWithTraffic = apiUsers.filter(user => 
+      user.status === "ACTIVE" && user.usedTrafficBytes > 0
+    ).length;
+    
+    // Общий трафик
+    const totalTrafficBytes = apiUsers.reduce((sum, user) => sum + (user.usedTrafficBytes || 0), 0);
+    const totalTrafficGB = (totalTrafficBytes / (1024 * 1024 * 1024)).toFixed(2);
+    
+    // Недавние пользователи (активные за последние 7 дней)
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    
+    const recentlyActiveUsers = apiUsers.filter(user => 
+      user.onlineAt && new Date(user.onlineAt) > sevenDaysAgo
+    ).length;
+    
+    // Формируем сообщение
+    let message = `📊 <b>Статистика пользователей</b>\n\n`;
+    message += `👥 <b>Общая информация:</b>\n`;
+    message += `▪️ Всего пользователей: ${totalUsers}\n`;
+    message += `▪️ Активных аккаунтов: ${activeUsers}\n`;
+    message += `▪️ С истёкшим сроком: ${expiredUsers}\n`;
+    message += `▪️ Активных за 7 дней: ${recentlyActiveUsers}\n\n`;
+    
+    message += `📈 <b>Использование трафика:</b>\n`;
+    message += `▪️ Использовали трафик: ${usersWithTraffic}\n`;
+    message += `▪️ Общий трафик: ${totalTrafficGB} GB\n\n`;
+    
+    // Добавляем топ-5 пользователей по использованию трафика
+    const topTrafficUsers = [...apiUsers]
+      .filter(user => user.usedTrafficBytes > 0)
+      .sort((a, b) => b.usedTrafficBytes - a.usedTrafficBytes)
+      .slice(0, 5);
+    
+    if (topTrafficUsers.length > 0) {
+      message += `🏆 <b>Топ-5 по трафику:</b>\n`;
+      topTrafficUsers.forEach((user, index) => {
+        const username = user.username || "Без имени";
+        const trafficGB = (user.usedTrafficBytes / (1024 * 1024 * 1024)).toFixed(2);
+        message += `${index + 1}. ${username}: ${trafficGB} GB\n`;
+      });
+    }
+
+    // Удаляем сообщение о загрузке
+    try {
+      await ctx.api.deleteMessage(loadingMsg.chat.id, loadingMsg.message_id);
+    } catch (deleteError) {
+      logger.warn(`Не удалось удалить сообщение о загрузке: ${deleteError.message}`);
+    }
+
+    // Отправляем сообщение
+    await ctx.reply(message, { parse_mode: "HTML" });
+    logger.info(`Администратор ${ctx.from.id} запросил краткую статистику пользователей`);
+  } catch (error) {
+    logger.error(`Ошибка в handleAllUsers: ${error.message}`);
+    await ctx.reply(`❌ Ошибка: ${error.message}`);
+  }
+}
+
 module.exports = {
   handleApproval,
   handleRejection,
   handleGetUsers,
+  handleAllUsers,
 };
