@@ -20,7 +20,7 @@ const {
   handleGetUsers,
 } = require("./controllers/admin");
 
-const { handleReceipt } = require("./controllers/payment");
+const { handleReceipt, stopInteractiveUpdates } = require("./controllers/payment");
 
 
 // Импорт middlewares
@@ -41,13 +41,19 @@ bot.use(logRequests);
 // Сессия для хранения данных пользователя
 bot.use(
   session({
-    initial: () => ({ tariff: null }),
+    initial: () => ({ 
+      tariff: null,
+      waitingMessageId: null,
+      statusUpdateInterval: null
+    }),
   }),
 );
 
 // Обработка команды /start
 bot.command("start", async (ctx) => {
   try {
+    // Останавливаем предыдущие интерактивные обновления при перезапуске бота
+    stopInteractiveUpdates(ctx);
     await handleStart(ctx);
   } catch (error) {
     await ErrorHandler.handle(ctx, error, "command:start");
@@ -70,6 +76,8 @@ bot.command("upload_photos", adminOnly, async (ctx) => {
 // Обработка кнопок основного меню
 bot.hears("Инструкция 📑", async (ctx) => {
   try {
+    // Останавливаем предыдущие интерактивные обновления
+    stopInteractiveUpdates(ctx);
     await handleInstruction(ctx);
   } catch (error) {
     await ErrorHandler.handle(ctx, error, "hears:Инструкция");
@@ -80,6 +88,8 @@ bot.hears(
   new RegExp(`Начать работу с ${config.service.name} 🚀`),
   async (ctx) => {
     try {
+      // Останавливаем предыдущие интерактивные обновления
+      stopInteractiveUpdates(ctx);
       await handleStartWork(ctx);
     } catch (error) {
       await ErrorHandler.handle(ctx, error, "hears:НачатьРаботу");
@@ -89,6 +99,8 @@ bot.hears(
 
 bot.hears("Правила использования", async (ctx) => {
   try {
+    // Останавливаем предыдущие интерактивные обновления
+    stopInteractiveUpdates(ctx);
     await handleRules(ctx);
   } catch (error) {
     await ErrorHandler.handle(ctx, error, "hears:Правила");
@@ -104,13 +116,21 @@ bot.on("callback_query", async (ctx) => {
     try {
       // Маршрутизация callback-запросов
       if (callbackData.startsWith("tariff_")) {
+        // Останавливаем предыдущие интерактивные обновления
+        stopInteractiveUpdates(ctx);
         await handleTariffSelection(ctx, callbackData);
       } else if (callbackData === "back_main") {
+        // Останавливаем предыдущие интерактивные обновления
+        stopInteractiveUpdates(ctx);
         await ctx.deleteMessage();
         await handleStart(ctx);
       } else if (callbackData === "back_tariffs") {
+        // Останавливаем предыдущие интерактивные обновления
+        stopInteractiveUpdates(ctx);
         await handleStartWork(ctx);
       } else if (callbackData === "payment_success") {
+        // Показываем пользователю индикатор загрузки
+        await ctx.answerCallbackQuery({ text: "Подготовка формы оплаты...", show_alert: false });
         await handlePaymentRequest(ctx);
       } else if (callbackData === "payment_cancel") {
         await handlePaymentCancel(ctx);
@@ -122,6 +142,9 @@ bot.on("callback_query", async (ctx) => {
         if (userId !== config.bot.adminId) {
           throw new Error(messages.errors.unauthorized);
         }
+
+        // Показываем администратору индикатор обработки
+        await ctx.answerCallbackQuery({ text: "Обработка платежа...", show_alert: false });
 
         // Используем разделитель ":" вместо "_"
         const [action, targetUserId, encodedTariff] = callbackData.split(":");
@@ -201,6 +224,8 @@ bot.on("callback_query", async (ctx) => {
 // Обработка медиа-сообщений (квитанций)
 bot.on(["message:photo", "message:document"], async (ctx) => {
   try {
+    // Останавливаем предыдущие интерактивные обновления
+    stopInteractiveUpdates(ctx);
     await handleReceipt(ctx);
   } catch (error) {
     await ErrorHandler.handle(ctx, error, "media_handler");

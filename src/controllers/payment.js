@@ -17,12 +17,18 @@ async function handleReceipt(ctx) {
     const username = ctx.from.username ? "@" + ctx.from.username : "не указан";
     const selectedTariff = ctx.session.tariff || "Тариф не указан";
 
-    // Отправляем сообщение об ожидании пользователю
-    await ctx.replyWithPhoto(PHOTO_IDS.waiting, {
+    // Отправляем улучшенное сообщение об ожидании пользователю
+    const waitingMsg = await ctx.replyWithPhoto(PHOTO_IDS.waiting, {
       caption: messages.payment.waiting,
       parse_mode: "HTML",
       reply_markup: getReturnTariffInlineKeyboard(),
     });
+    
+    // Сохраняем ID сообщения для последующего обновления
+    ctx.session.waitingMessageId = waitingMsg.message_id;
+    
+    // Запускаем процесс отправки интерактивных статусов
+    startInteractiveUpdates(ctx);
 
     // Формируем текст для администратора
     const caption = messages.admin.new_payment
@@ -57,6 +63,58 @@ async function handleReceipt(ctx) {
   }
 }
 
+/**
+ * Запускает процесс интерактивных обновлений статуса платежа
+ * @param {Context} ctx - Контекст бота
+ */
+async function startInteractiveUpdates(ctx) {
+  if (!ctx.session.waitingMessageId) return;
+  
+  const statusMessages = [
+    "⌛ Администратор обрабатывает ваш платеж...",
+    "⌛ Проверка платежной информации...",
+    "⌛ Ваш платеж в очереди на обработку...",
+    "⌛ Скоро ваш платеж будет обработан..."
+  ];
+  
+  let currentIndex = 0;
+  
+  // Сохраняем интервал в сессии, чтобы его можно было остановить
+  ctx.session.statusUpdateInterval = setInterval(async () => {
+    try {
+      if (!ctx.session.waitingMessageId) {
+        clearInterval(ctx.session.statusUpdateInterval);
+        return;
+      }
+      
+      // Обновляем сообщение с новым статусом
+      await ctx.api.editMessageCaption(ctx.chat.id, ctx.session.waitingMessageId, {
+        caption: `${messages.payment.waiting}\n\n${statusMessages[currentIndex]}`,
+        parse_mode: "HTML",
+        reply_markup: getReturnTariffInlineKeyboard(),
+      });
+      
+      // Переходим к следующему статусу
+      currentIndex = (currentIndex + 1) % statusMessages.length;
+    } catch (error) {
+      logger.error(`Ошибка при обновлении статуса: ${error.message}`);
+      clearInterval(ctx.session.statusUpdateInterval);
+    }
+  }, 30000); // Обновляем каждые 30 секунд
+}
+
+/**
+ * Останавливает процесс интерактивных обновлений статуса
+ * @param {Context} ctx - Контекст бота
+ */
+function stopInteractiveUpdates(ctx) {
+  if (ctx.session.statusUpdateInterval) {
+    clearInterval(ctx.session.statusUpdateInterval);
+    ctx.session.statusUpdateInterval = null;
+  }
+}
+
 module.exports = {
   handleReceipt,
+  stopInteractiveUpdates,
 };

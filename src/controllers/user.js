@@ -142,6 +142,24 @@ async function handleTrialActivation(ctx, userId, tariffKey) {
       return;
     }
 
+    // Показываем пользователю сообщение о начале активации
+    const loadingMsg = await ctx.reply("⌛ Активация пробного периода началась, пожалуйста, подождите...");
+    
+    // Запускаем индикатор активности
+    let dots = "";
+    const loadingInterval = setInterval(async () => {
+      try {
+        dots = dots.length >= 3 ? "" : dots + ".";
+        await ctx.api.editMessageText(
+          ctx.chat.id,
+          loadingMsg.message_id,
+          `⌛ Активация пробного периода${dots}\nПожалуйста, подождите, это займёт около 30 секунд`
+        );
+      } catch (err) {
+        logger.warn(`Ошибка при обновлении индикатора загрузки: ${err.message}`);
+      }
+    }, 1500);
+
     // Генерируем имя пользователя
     const username = `tg_${userId}_${Math.floor(Math.random() * 1000)}`;
     logger.info(`Генерация имени пользователя: ${username}`);
@@ -173,6 +191,20 @@ async function handleTrialActivation(ctx, userId, tariffKey) {
       logger.info(`[Controller] Вызов api.createUser для ${username}`);
       const userResponse = await api.createUser(token, userData);
       logger.info(`[Controller] Пользователь ${username} создан: ${userResponse?.uuid || 'UUID не получен'}`);
+
+      // Останавливаем индикатор загрузки
+      clearInterval(loadingInterval);
+      
+      // Обновляем сообщение о загрузке
+      try {
+        await ctx.api.editMessageText(
+          ctx.chat.id,
+          loadingMsg.message_id,
+          `✅ Активация пробного периода завершена успешно!`
+        );
+      } catch (updateError) {
+        logger.warn(`Не удалось обновить сообщение о загрузке: ${updateError.message}`);
+      }
 
       // Получаем URL подписки напрямую из ответа API
       let subscriptionUrl = userResponse?.subscriptionUrl;
@@ -230,6 +262,20 @@ async function handleTrialActivation(ctx, userId, tariffKey) {
         logger.error(`Ошибка при отправке сообщения администратору: ${adminMsgError.message}`);
       }
     } catch (apiError) {
+      // Останавливаем индикатор загрузки
+      clearInterval(loadingInterval);
+      
+      // Обновляем сообщение о загрузке
+      try {
+        await ctx.api.editMessageText(
+          ctx.chat.id,
+          loadingMsg.message_id,
+          `❌ Ошибка при активации пробного периода`
+        );
+      } catch (updateError) {
+        logger.warn(`Не удалось обновить сообщение о загрузке: ${updateError.message}`);
+      }
+
       // Логируем ошибку со стеком вызовов
       logger.error(`[Controller] Ошибка при активации пробного периода для ${userId}: ${apiError.message}`, apiError.stack);
 
@@ -255,14 +301,15 @@ async function handleTrialActivation(ctx, userId, tariffKey) {
 
         await ctx.api.sendMessage(config.bot.adminId, errorMessage);
       } catch (adminMsgError) {
-        logger.error(`Не удалось отправить сообщение об ошибке администратору: ${adminMsgError.message}`);
+        logger.error(`Ошибка при отправке сообщения администратору: ${adminMsgError.message}`);
       }
     }
   } catch (error) {
-    // Логируем критическую ошибку со стеком вызовов
-    logger.error(`[Controller] Критическая ошибка в handleTrialActivation для ${userId}: ${error.message}`, error.stack);
+    logger.error(`Ошибка в handleTrialActivation: ${error.message}`);
     try {
-      await ctx.reply(messages.errors.general);
+      await ctx.reply(messages.errors.general, {
+        reply_markup: getReturnTariffInlineKeyboard(),
+      });
     } catch (replyError) {
       logger.error(`Не удалось отправить сообщение об ошибке: ${replyError.message}`);
     }
@@ -270,13 +317,42 @@ async function handleTrialActivation(ctx, userId, tariffKey) {
 }
 
 /**
- * Обрабатывает запрос на отправку платежной квитанции
+ * Обрабатывает запрос на оплату
  * @param {Context} ctx - Контекст бота
  */
 async function handlePaymentRequest(ctx) {
   try {
-    await ctx.reply(messages.payment.send_receipt);
-    logger.info(`Пользователь ${ctx.from.id} запросил отправку квитанции`);
+    const userId = ctx.from.id;
+    const tariff = ctx.session.tariff;
+
+    if (!tariff) {
+      logger.warn(`Пользователь ${userId} пытается оплатить без выбора тарифа`);
+      await ctx.reply("Пожалуйста, сначала выберите тариф!", {
+        reply_markup: getTariffsInlineKeyboard(),
+      });
+      return;
+    }
+
+    // Отправляем сообщение о подготовке формы оплаты
+    const loadingMsg = await ctx.reply("🔄 Подготовка информации для оплаты...");
+
+    // Имитируем процесс подготовки информации для оплаты
+    setTimeout(async () => {
+      try {
+        // Удаляем сообщение о загрузке
+        await ctx.api.deleteMessage(ctx.chat.id, loadingMsg.message_id);
+        
+        // Отправляем реквизиты для оплаты (только текст)
+        await ctx.reply(messages.payment.send_receipt, {
+          parse_mode: "HTML",
+        });
+        
+        logger.info(`Пользователь ${userId} получил информацию для оплаты тарифа ${tariff}`);
+      } catch (error) {
+        logger.error(`Ошибка при отправке информации для оплаты: ${error.message}`);
+      }
+    }, 2000); // Задержка в 2 секунды для имитации загрузки
+
   } catch (error) {
     logger.error(`Ошибка в handlePaymentRequest: ${error.message}`);
     await ctx.reply(messages.errors.general);

@@ -1,6 +1,12 @@
 const axios = require("axios");
 const config = require("../../config");
 const logger = require("../utils/logger");
+const {
+  BlurnetApiError,
+  ApiNetworkError,
+  ApiAuthError,
+  ApiServerError,
+} = require("../utils/errors");
 
 /**
  * API модуль для авторизации
@@ -9,6 +15,7 @@ class AuthAPI {
   constructor() {
     this.baseURL = config.api.url;
     this.token = null;
+    this.tokenExpiresAt = 0; // Добавляем время истечения токена
     this.lastLoginAttempt = 0;
     this.loginAttempts = 0;
     this.MAX_LOGIN_ATTEMPTS = 3;
@@ -69,11 +76,13 @@ class AuthAPI {
         );
 
         if (!response.data || !response.data.response || !response.data.response.accessToken) {
-          throw new Error("Неверный формат ответа от сервера");
+          throw new BlurnetApiError("Неверный формат ответа от сервера при авторизации");
         }
 
         this.token = response.data.response.accessToken;
         this.loginAttempts = 0; // Сбрасываем счетчик при успешной авторизации
+        // Устанавливаем время истечения токена (например, 1 час = 3600 * 1000 мс)
+        this.tokenExpiresAt = Date.now() + 3600 * 1000; 
         logger.info("Успешная авторизация в API");
 
         return this.token;
@@ -83,12 +92,18 @@ class AuthAPI {
             "Ошибка авторизации в API после всех попыток:",
             error.response?.data || error.message,
           );
-          
-          if (error.response?.status === 403) {
-            throw new Error("Доступ запрещен. Проверьте учетные данные и cookie.");
+          logger.error(`[CRITICAL] Не удалось авторизоваться в API Blurnet после ${MAX_RETRIES} попыток.`, error);
+
+          if (error instanceof BlurnetApiError) {
+            throw error; // Просто перебрасываем нашу специфическую ошибку
           }
           
-          throw new Error(`Не удалось авторизоваться в панели управления: ${error.message}`);
+          if (error.response?.status === 401 || error.response?.status === 403) {
+            throw new ApiAuthError("Доступ запрещен. Проверьте учетные данные и cookie.", error);
+          }
+
+          // Если это не наша ошибка и не 401/403, выбрасываем общую
+          throw new BlurnetApiError(`Не удалось авторизоваться в панели управления: ${error.message}`, error);
         }
         
         const isNetworkError = error.code === 'ECONNREFUSED' || 
@@ -98,22 +113,25 @@ class AuthAPI {
         
         if (isNetworkError) {
           logger.warn(`Ошибка сети при авторизации, попытка ${attempts}/${MAX_RETRIES}: ${error.message}`);
-          // Уменьшаем счетчик попыток авторизации, так как это сетевая ошибка, а не проблема с учетными данными
           this.loginAttempts = Math.max(0, this.loginAttempts - 1);
-          // Ждем перед повторной попыткой
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          await new Promise(resolve => setTimeout(resolve, 2000 * attempts)); // Увеличиваем задержку
           continue;
+        } else if (error.response?.status >= 500) {
+          // Ошибка сервера, тоже пробуем повторить
+          logger.warn(`Ошибка сервера (${error.response.status}) при авторизации, попытка ${attempts}/${MAX_RETRIES}: ${error.message}`);
+          await new Promise(resolve => setTimeout(resolve, 2000 * attempts));
+          continue;
+        } else if (error.response?.status === 401 || error.response?.status === 403) {
+          // Ошибка авторизации - нет смысла повторять
+          logger.error("Ошибка авторизации в API:", error.response?.data || error.message);
+          throw new ApiAuthError("Доступ запрещен. Проверьте учетные данные и cookie.", error);
         } else {
+          // Другие ошибки клиента (4xx, кроме 401/403) - нет смысла повторять
           logger.error(
-            "Ошибка авторизации в API:",
+            "Неизвестная ошибка при авторизации:",
             error.response?.data || error.message,
           );
-          
-          if (error.response?.status === 403) {
-            throw new Error("Доступ запрещен. Проверьте учетные данные и cookie.");
-          }
-          
-          throw new Error(`Не удалось авторизоваться в панели управления: ${error.message}`);
+          throw new BlurnetApiError(`Неизвестная ошибка при авторизации: ${error.message}`, error);
         }
       }
     }
@@ -124,10 +142,13 @@ class AuthAPI {
    * @returns {Promise<string>} Токен доступа
    */
   async getToken() {
-    if (!this.token) {
-      return this.login();
+    // Проверяем, есть ли токен и не истек ли он
+    if (this.token && Date.now() < this.tokenExpiresAt) {
+      return this.token;
     }
-    return this.token;
+    // Если токен отсутствует или истек, выполняем вход
+    logger.info("Токен отсутствует или истек. Выполняется вход...");
+    return this.login();
   }
 
   /**
@@ -142,15 +163,22 @@ class AuthAPI {
         validateStatus: () => true // Принимаем любой статус
       });
       
-      if (response.status >= 200 && response.status < 500) {
+      if (response.status >= 200 && response.status < 400) { // 2xx и 3xx считаем успехом
         logger.info(`Соединение с API установлено, статус: ${response.status}`);
         return true;
+      } else if (response.status >= 500) {
+        logger.error(`Ошибка соединения с API (ошибка сервера), статус: ${response.status}`);
+        return false;
       } else {
         logger.error(`Ошибка соединения с API, статус: ${response.status}`);
         return false;
       }
     } catch (error) {
       logger.error(`Ошибка проверки соединения с API: ${error.message}`);
+      // Если это сетевая ошибка, логируем как ApiNetworkError
+      if (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT' || error.code === 'ENOTFOUND') {
+         logger.error("[CRITICAL] Не удается подключиться к API Blurnet. Проверьте доступность сервера и сетевые настройки.", new ApiNetworkError(error.message, error));
+      }
       return false;
     }
   }

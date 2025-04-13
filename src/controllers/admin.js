@@ -6,6 +6,7 @@ const logger = require("../utils/logger");
 const { getMainKeyboard, getTariffsInlineKeyboard } = require("../keyboards");
 const { getTariff, getDefaultTariffName, calculateExpireDate } = require("../constants/tariffs");
 const { getUsers } = require("../data/users");
+const { stopInteractiveUpdates } = require("./payment");
 
 /**
  * Обрабатывает подтверждение платежа администратором
@@ -20,6 +21,14 @@ async function handleApproval(ctx, bot, userId, tariff) {
   );
 
   try {
+    // Останавливаем интерактивные обновления статуса платежа
+    try {
+      // Отправляем пользователю сообщение, которое заменит интерактивное уведомление
+      await bot.api.sendMessage(userId, "🔄 Ваш платеж проверяется администратором...");
+    } catch (sessionError) {
+      logger.warn(`Не удалось отправить сообщение пользователю: ${sessionError.message}`);
+    }
+
     // Обновляем подпись сообщения с квитанцией
     const originalCaption = ctx.callbackQuery.message.caption;
     const newCaption = `${originalCaption}\n\n✅ ПОДТВЕРЖДЕНО\nОбработано: ${new Date().toLocaleString()}`;
@@ -150,6 +159,14 @@ async function handleRejection(ctx, bot, userId, tariff) {
   );
 
   try {
+    // Останавливаем интерактивные обновления статуса платежа
+    try {
+      // Отправляем пользователю сообщение, которое заменит интерактивное уведомление
+      await bot.api.sendMessage(userId, "🔄 Ваш платеж проверяется администратором...");
+    } catch (sessionError) {
+      logger.warn(`Не удалось отправить сообщение пользователю: ${sessionError.message}`);
+    }
+
     // Обновляем подпись сообщения с квитанцией
     const originalCaption = ctx.callbackQuery.message.caption;
     const newCaption = `${originalCaption}\n\n❌ ОТКЛОНЕНО\nОбработано: ${new Date().toLocaleString()}`;

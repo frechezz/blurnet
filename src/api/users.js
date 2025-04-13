@@ -3,6 +3,58 @@ const config = require("../../config");
 const authAPI = require("./auth");
 const logger = require("../utils/logger");
 const { calculateExpireDate } = require("../constants/tariffs");
+const {
+  BlurnetApiError,
+  ApiNetworkError,
+  ApiAuthError,
+  ApiValidationError,
+  ApiNotFoundError,
+  ApiServerError,
+} = require("../utils/errors");
+
+/**
+ * Вспомогательная функция для повторных попыток API-запросов
+ * @param {Function} requestFn Функция, выполняющая API-запрос
+ * @param {string} operationName Название операции для логирования
+ * @param {number} maxRetries Максимальное количество попыток
+ * @param {number} initialDelay Начальная задержка перед повтором (в мс)
+ * @returns {Promise<any>} Результат выполнения запроса
+ */
+async function retryApiRequest(requestFn, operationName, maxRetries = 3, initialDelay = 1000) {
+  let attempts = 0;
+  while (attempts < maxRetries) {
+    attempts++;
+    try {
+      logger.debug(`[${operationName}] Попытка ${attempts}/${maxRetries}...`);
+      return await requestFn();
+    } catch (error) {
+      logger.warn(`[${operationName}] Ошибка при попытке ${attempts}/${maxRetries}: ${error.message}`);
+
+      const isNetworkError = error instanceof ApiNetworkError || 
+                             (error.originalError && (error.originalError.code === 'ECONNREFUSED' || error.originalError.code === 'ETIMEDOUT' || error.originalError.code === 'ENOTFOUND' || error.originalError.message.includes('timeout')));
+      
+      const isServerError = error instanceof ApiServerError || (error.response?.status >= 500 && error.response?.status < 600);
+      
+      const shouldRetry = isNetworkError || isServerError;
+
+      if (shouldRetry && attempts < maxRetries) {
+        const delay = initialDelay * Math.pow(2, attempts - 1); // Экспоненциальная задержка
+        logger.warn(`[${operationName}] Повторная попытка через ${delay / 1000} сек...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      } else {
+        logger.error(`[${operationName}] Ошибка после ${attempts} попыток.`, error);
+        // Логируем критическую ошибку, если она не была обработана
+        if (!(error instanceof BlurnetApiError)) {
+           logger.error(`[CRITICAL] Неустранимая ошибка при выполнении операции '${operationName}'.`, new BlurnetApiError(`Ошибка при ${operationName}`, error));
+        } else {
+           logger.error(`[CRITICAL] Не удалось выполнить операцию '${operationName}' после ${maxRetries} попыток. Тип ошибки: ${error.name}.`, error);
+        }
+        throw error; // Перебрасываем последнюю ошибку
+      }
+    }
+  }
+}
 
 /**
  * API модуль для работы с пользователями
@@ -57,37 +109,33 @@ class UsersAPI {
    * @returns {Promise<Object>} Данные о пользователях
    */
   async getAllUsers() {
-    return this.processWithDelay(async () => {
-      try {
-        const token = await authAPI.getToken();
-
-        const response = await axios.get(
-          `${this.baseURL}/api/users?page=1&pageSize=1000`,
-          {
+    // Используем обертку retryApiRequest
+    return this.processWithDelay(() => 
+      retryApiRequest(async () => {
+        try {
+          const token = await authAPI.getToken();
+          const response = await axios.get(`${this.baseURL}/api/users/v2`, {
             headers: {
               "Authorization": `Bearer ${token}`,
               "Content-Type": "application/json",
               "Cookie": config.api.cookie || "",
             },
-          },
-        );
+            timeout: 10000, // Таймаут для запроса
+          });
 
-        if (!response.data || !response.data.response) {
-          throw new Error("Неверный формат ответа от сервера");
+          if (!response.data || !response.data.response) {
+            throw new BlurnetApiError("Неверный формат ответа при получении пользователей");
+          }
+
+          logger.info(
+            `Успешно получены данные о ${response.data.response.total} пользователях`,
+          );
+          return response.data.response;
+        } catch (error) {
+          throw this.handleApiError(error, "получении списка пользователей");
         }
-
-        logger.info(
-          `Успешно получены данные о пользователях: ${response.data.response.total} записей`,
-        );
-        return response.data.response;
-      } catch (error) {
-        logger.error(
-          "Ошибка получения списка пользователей:",
-          error.response?.data || error.message,
-        );
-        throw new Error(`Не удалось получить список пользователей: ${error.message}`);
-      }
-    });
+      }, "getAllUsers", 3, 1000) // 3 попытки, начальная задержка 1 сек
+    );
   }
 
   /**
@@ -100,15 +148,11 @@ class UsersAPI {
       return this.inboundUuid;
     }
 
-    return this.processWithDelay(async () => {
-      const MAX_RETRIES = 3;
-      let attempts = 0;
-      
-      while (attempts < MAX_RETRIES) {
-        attempts++;
+    // Используем обертку retryApiRequest
+    return this.processWithDelay(() => 
+      retryApiRequest(async () => {
         try {
           const token = await authAPI.getToken();
-
           logger.info(`Получение списка инбаундов для тега: ${config.api.inboundTag}`);
           const response = await axios.get(`${this.baseURL}/api/inbounds`, {
             headers: {
@@ -120,12 +164,12 @@ class UsersAPI {
 
           // Проверка структуры ответа
           if (!response.data) {
-            throw new Error("Сервер вернул пустой ответ");
+            throw new BlurnetApiError("Сервер вернул пустой ответ при получении инбаундов");
           }
           
           if (!response.data.response || !Array.isArray(response.data.response)) {
             logger.error(`Неверный формат ответа от сервера: ${JSON.stringify(response.data)}`);
-            throw new Error("Неверный формат ответа от сервера");
+            throw new BlurnetApiError("Неверный формат ответа от сервера при получении инбаундов");
           }
 
           const inbounds = response.data.response;
@@ -160,67 +204,26 @@ class UsersAPI {
               return this.inboundUuid;
             }
             
-            throw new Error(`Инбаунд "${config.api.inboundTag}" не найден и нет подходящей замены`);
+            throw new BlurnetApiError(`Инбаунд "${config.api.inboundTag}" не найден и нет подходящей замены`);
           }
 
           this.inboundUuid = targetInbound.uuid;
           logger.info(`Успешно получен UUID инбаунда: ${this.inboundUuid}`);
           return this.inboundUuid;
         } catch (error) {
-          if (attempts >= MAX_RETRIES) {
-            logger.error(
-              "Ошибка получения инбаунда после всех попыток:",
-              error.response?.data || error.message,
-              error.stack
-            );
-            
-            // Проверяем, есть ли у нас значение по умолчанию в конфиге
-            if (config.api.defaultInboundUuid) {
-              logger.warn(`Используем UUID инбаунда по умолчанию из конфига: ${config.api.defaultInboundUuid}`);
-              this.inboundUuid = config.api.defaultInboundUuid;
-              return this.inboundUuid;
-            }
-            
-            throw new Error(`Не удалось получить информацию об инбаунде: ${error.message}`);
+          // Если не удалось получить после всех попыток внутри retryApiRequest,
+          // пробуем использовать значение по умолчанию
+          if (error instanceof BlurnetApiError && config.api.defaultInboundUuid) {
+             logger.warn(`Не удалось получить UUID инбаунда после всех попыток. Используем UUID по умолчанию: ${config.api.defaultInboundUuid}`);
+             this.inboundUuid = config.api.defaultInboundUuid;
+             return this.inboundUuid;
           }
-          
-          const isNetworkError = error.code === 'ECONNREFUSED' || 
-                               error.code === 'ETIMEDOUT' || 
-                               error.code === 'ENOTFOUND' ||
-                               error.message.includes('timeout');
-          
-          if (isNetworkError) {
-            logger.warn(`Ошибка сети при получении инбаунда, попытка ${attempts}/${MAX_RETRIES}: ${error.message}`);
-            // Ждем перед повторной попыткой
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            continue;
-          } else {
-            logger.error(
-              "Ошибка получения инбаунда:",
-              error.response?.data || error.message,
-              error.stack
-            );
-            
-            // Если это ошибка 400-го или 500-го уровня, логируем детально
-            if (error.response?.status) {
-              logger.error(`Статус ошибки: ${error.response.status}`);
-              if (error.response.data) {
-                logger.error(`Детали: ${JSON.stringify(error.response.data)}`);
-              }
-            }
-            
-            // Пробуем еще раз с другим запросом
-            if (attempts < MAX_RETRIES) {
-              logger.warn(`Попробуем еще раз (попытка ${attempts + 1}/${MAX_RETRIES})`);
-              await new Promise(resolve => setTimeout(resolve, 2000));
-              continue;
-            }
-            
-            throw new Error(`Не удалось получить информацию об инбаунде: ${error.message}`);
-          }
+          // Если значения по умолчанию нет или ошибка другого типа, перебрасываем ее
+          // Обработка специфичных ошибок происходит в handleApiError
+          throw this.handleApiError(error, "получении UUID инбаунда"); 
         }
-      }
-    });
+      }, "getInboundUuid", 3, 2000) // 3 попытки, начальная задержка 2 сек
+    );
   }
 
   /**
@@ -230,17 +233,13 @@ class UsersAPI {
    * @returns {Promise<object>} Созданный пользователь
    */
   async createUser(token, userData) {
-    // Принимает токен, UUID и подготовленные данные
-    // Ставит в очередь ТОЛЬКО сам запрос на создание пользователя
     const username = userData.username; // Получаем username для логирования
-    return this.processWithDelay(async () => {
-      const MAX_RETRIES = 3; // Можно уменьшить, т.к. подготовка уже пройдена
-      let attempts = 0;
-      
-      while (attempts < MAX_RETRIES) {
-        attempts++;
+    
+    // Используем обертку retryApiRequest
+    return this.processWithDelay(() => 
+      retryApiRequest(async () => {
         try {
-          logger.info(`[API createUser] Попытка ${attempts}/${MAX_RETRIES} создания пользователя: ${username}`);
+          logger.info(`[API createUser] Попытка создания пользователя: ${username}`);
           logger.debug(`Данные запроса для создания: ${JSON.stringify(userData)}`);
 
           const response = await axios.post(`${this.baseURL}/api/users`, userData, {
@@ -249,68 +248,89 @@ class UsersAPI {
               "Content-Type": "application/json",
               "Cookie": config.api.cookie || "",
             },
-            timeout: 15000 // Увеличиваем таймаут до 15 секунд
+            timeout: 20000, // Увеличиваем таймаут
           });
 
-          if (!response.data || !response.data.response) {
-            throw new Error("Неверный формат ответа от сервера");
-          }
-
-          logger.info(`Пользователь ${username} успешно создан с UUID: ${response.data.response.uuid}`);
-          
-          // Добавляем генерацию URL подписки для пользователя
-          try {
-            const createdUser = response.data.response;
-            let subscriptionUrl = null;
+          // Проверка статуса и ответа
+          if (!response.data || !response.data.response || response.status >= 400) {
+            // Логируем детали ошибки перед выбросом исключения
+            const errorMessage = response.data?.message || "Не удалось создать пользователя";
+            const errorDetails = response.data?.response || response.data || "No details";
+            logger.error(`[API createUser] Ошибка ответа (${response.status}): ${errorMessage}. Детали: ${JSON.stringify(errorDetails)}`);
             
-            // Пытаемся получить URL из ответа или формируем сами
-            if (createdUser.subscriptionUrl) {
-              // Используем URL из ответа
-              subscriptionUrl = createdUser.subscriptionUrl;
-            } else if (createdUser.uuid) {
-              // Формируем URL из UUID
-              // Получаем короткий UUID (первые 8 символов)
-              const shortUuid = createdUser.uuid.split('-')[0];
-              subscriptionUrl = `${config.urls.subscription}${shortUuid}/singbox`;
+            // Генерируем специфическую ошибку в зависимости от статуса
+            if (response.status === 400 || response.status === 422) {
+              throw new ApiValidationError(`Ошибка валидации при создании пользователя: ${errorMessage}`, null, errorDetails);
+            } else if (response.status === 401 || response.status === 403) {
+              throw new ApiAuthError(`Ошибка авторизации при создании пользователя: ${errorMessage}`);
+            } else if (response.status === 404) {
+              throw new ApiNotFoundError(`Не найден API endpoint для создания пользователя`);
+            } else if (response.status >= 500) {
+              throw new ApiServerError(`Ошибка сервера (${response.status}) при создании пользователя: ${errorMessage}`, null, response.status);
+            } else {
+              throw new BlurnetApiError(`Ошибка (${response.status}) при создании пользователя: ${errorMessage}`);
             }
-            
-            return {
-              ...createdUser,
-              subscriptionUrl
-            };
-          } catch (urlError) {
-            logger.error(`Ошибка при генерации URL подписки: ${urlError.message}`);
-            // Возвращаем пользователя даже если не удалось создать URL
-            return response.data.response;
           }
+
+          logger.info(`[API createUser] Пользователь ${username} успешно создан`);
+          return response.data.response; // Возвращаем созданного пользователя
+
         } catch (error) {
-          // Логируем ошибку с более подробной информацией
-          const errorMessage = error.response?.data ? JSON.stringify(error.response.data) : error.message;
-          logger.error(`Ошибка создания пользователя ${username} (попытка ${attempts}/${MAX_RETRIES}): ${errorMessage}`, error.stack);
-
-          if (attempts >= MAX_RETRIES) {
-            // Ошибка возникла именно при POST запросе
-            throw new Error(`Не удалось создать пользователя ${username} после ${MAX_RETRIES} попыток POST запроса: ${errorMessage}`);
-          }
-
-          // Добавляем задержку перед повторной попыткой
-          await new Promise(resolve => setTimeout(resolve, 1500)); 
+          // Если axios выбросил ошибку (например, таймаут, сетевая ошибка), обрабатываем ее
+          // Если это уже наша специфическая ошибка (из блока if выше), она будет обработана в handleApiError
+          throw this.handleApiError(error, `создании пользователя ${username}`);
         }
-      }
-      // Если все попытки неудачны, выбрасываем ошибку (хотя цикл while должен был выйти раньше)
-      throw new Error(`Не удалось создать пользователя ${username} после ${MAX_RETRIES} попыток POST запроса.`);
-    });
+      }, "createUser", 3, 1500) // 3 попытки, начальная задержка 1.5 сек
+    );
   }
 
-  // /**
-  //  * Генерирует URL подписки для пользователя
-  //  * @param {string} shortUuid - Короткий UUID пользователя
-  //  * @returns {string} URL подписки
-  //  */
-  // generateSubscriptionUrl(shortUuid) {
-  //   // Используем корректный формат URL для подписки согласно API документации
-  //   return `${config.urls.subscription}${shortUuid}/singbox`;
-  // }
+  /**
+   * Обработчик ошибок API для стандартизации и генерации специфических исключений
+   * @param {Error} error Исходная ошибка
+   * @param {string} operation Описание операции, во время которой произошла ошибка
+   * @returns {BlurnetApiError}
+   */
+  handleApiError(error, operation) {
+    if (error instanceof BlurnetApiError) {
+      // Если это уже наша специфическая ошибка, просто возвращаем ее
+      // Логирование уже должно было произойти в retryApiRequest или при создании ошибки
+      return error;
+    }
+
+    // Анализируем ошибку axios или другую стандартную ошибку
+    logger.error(`Ошибка при ${operation}:`, error.response?.data || error.message, error.stack);
+
+    const isNetworkError = error.code === 'ECONNREFUSED' || 
+                         error.code === 'ETIMEDOUT' || 
+                         error.code === 'ENOTFOUND' ||
+                         error.message.includes('timeout');
+    
+    if (isNetworkError) {
+      return new ApiNetworkError(`Сетевая ошибка при ${operation}`, error);
+    }
+    
+    if (error.response) {
+      const status = error.response.status;
+      const data = error.response.data;
+      const message = data?.message || error.message;
+      
+      if (status === 401 || status === 403) {
+        return new ApiAuthError(`Ошибка авторизации (${status}) при ${operation}: ${message}`, error);
+      }
+      if (status === 400 || status === 422) {
+        return new ApiValidationError(`Ошибка валидации (${status}) при ${operation}: ${message}`, error, data);
+      }
+      if (status === 404) {
+        return new ApiNotFoundError(`Ресурс не найден (${status}) при ${operation}: ${message}`, error);
+      }
+      if (status >= 500) {
+        return new ApiServerError(`Ошибка сервера (${status}) при ${operation}: ${message}`, error, status);
+      }
+    }
+
+    // Если не удалось определить тип ошибки, возвращаем общую
+    return new BlurnetApiError(`Неизвестная ошибка при ${operation}: ${error.message}`, error);
+  }
 }
 
 module.exports = new UsersAPI();
