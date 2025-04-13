@@ -97,75 +97,104 @@ bot.hears("Правила использования", async (ctx) => {
 
 // Обработка callback-запросов (inline кнопок)
 bot.on("callback_query", async (ctx) => {
-  const callbackData = ctx.callbackQuery.data;
-  const userId = ctx.from.id;
-
   try {
-    // Маршрутизация callback-запросов
-    if (callbackData.startsWith("tariff_")) {
-      await handleTariffSelection(ctx, callbackData);
-    } else if (callbackData === "back_main") {
-      await ctx.deleteMessage();
-      await handleStart(ctx);
-    } else if (callbackData === "back_tariffs") {
-      await handleStartWork(ctx);
-    } else if (callbackData === "payment_success") {
-      await handlePaymentRequest(ctx);
-    } else if (callbackData === "payment_cancel") {
-      await handlePaymentCancel(ctx);
-    } else if (
-      callbackData.startsWith("approve:") ||
-      callbackData.startsWith("reject:")
-    ) {
-      // Проверка прав администратора
-      if (userId !== config.bot.adminId) {
-        throw new Error(messages.errors.unauthorized);
-      }
+    const callbackData = ctx.callbackQuery.data;
+    const userId = ctx.from.id;
 
-      // Используем разделитель ":" вместо "_"
-      const [action, targetUserId, encodedTariff] = callbackData.split(":");
-
-      // Проверка наличия необходимых данных
-      if (!encodedTariff) {
-        logger.error("Ошибка: encodedTariff не определен!");
-        await ctx.answerCallbackQuery({
-          text: "Ошибка: Не удалось определить тариф",
-          show_alert: true,
-        });
-        return;
-      }
-
-      // Декодирование тарифа
-      try {
-        const tariff = Buffer.from(encodedTariff, "base64").toString();
-        logger.debug(`Декодирован тариф: ${tariff}`);
-
-        if (action === "approve") {
-          await handleApproval(ctx, bot, Number(targetUserId), tariff);
-          await ctx.answerCallbackQuery({ text: "Платеж подтвержден" });
-        } else if (action === "reject") {
-          await handleRejection(ctx, bot, Number(targetUserId), tariff);
-          await ctx.answerCallbackQuery({ text: "Платеж отклонен" });
+    try {
+      // Маршрутизация callback-запросов
+      if (callbackData.startsWith("tariff_")) {
+        await handleTariffSelection(ctx, callbackData);
+      } else if (callbackData === "back_main") {
+        await ctx.deleteMessage();
+        await handleStart(ctx);
+      } else if (callbackData === "back_tariffs") {
+        await handleStartWork(ctx);
+      } else if (callbackData === "payment_success") {
+        await handlePaymentRequest(ctx);
+      } else if (callbackData === "payment_cancel") {
+        await handlePaymentCancel(ctx);
+      } else if (
+        callbackData.startsWith("approve:") ||
+        callbackData.startsWith("reject:")
+      ) {
+        // Проверка прав администратора
+        if (userId !== config.bot.adminId) {
+          throw new Error(messages.errors.unauthorized);
         }
-      } catch (error) {
-        logger.error(`Ошибка декодирования тарифа: ${error.message}`);
-        await ctx.answerCallbackQuery({
-          text: "Ошибка при обработке тарифа",
-          show_alert: true,
-        });
+
+        // Используем разделитель ":" вместо "_"
+        const [action, targetUserId, encodedTariff] = callbackData.split(":");
+
+        // Проверка наличия необходимых данных
+        if (!encodedTariff) {
+          logger.error("Ошибка: encodedTariff не определен!");
+          await ctx.answerCallbackQuery({
+            text: "Ошибка: Не удалось определить тариф",
+            show_alert: true,
+          });
+          return;
+        }
+
+        // Декодирование тарифа
+        try {
+          const tariff = Buffer.from(encodedTariff, "base64").toString();
+          logger.debug(`Декодирован тариф: ${tariff}`);
+
+          if (action === "approve") {
+            await handleApproval(ctx, bot, Number(targetUserId), tariff);
+            await ctx.answerCallbackQuery({ text: "Платеж подтвержден" });
+          } else if (action === "reject") {
+            await handleRejection(ctx, bot, Number(targetUserId), tariff);
+            await ctx.answerCallbackQuery({ text: "Платеж отклонен" });
+          }
+        } catch (error) {
+          logger.error(`Ошибка декодирования тарифа: ${error.message}`);
+          await ctx.answerCallbackQuery({
+            text: "Ошибка при обработке тарифа",
+            show_alert: true,
+          });
+        }
+      }
+
+      // Всегда отвечаем на callback-запрос, чтобы убрать состояние загрузки
+      if (!ctx.callbackQuery.answered) {
+        await ctx.answerCallbackQuery();
+      }
+    } catch (innerError) {
+      logger.error(`Ошибка при обработке callback: ${innerError.message}`, innerError.stack);
+      try {
+        await ErrorHandler.handle(ctx, innerError, "callback_query");
+        if (!ctx.callbackQuery.answered) {
+          await ctx.answerCallbackQuery({
+            text: `Ошибка: ${innerError.message}`,
+            show_alert: true,
+          });
+        }
+      } catch (handlerError) {
+        logger.error(`Ошибка в обработчике ошибок: ${handlerError.message}`);
+        try {
+          if (!ctx.callbackQuery.answered) {
+            await ctx.answerCallbackQuery({
+              text: `Произошла ошибка`,
+              show_alert: true,
+            });
+          }
+        } catch (finalError) {
+          logger.error(`Критическая ошибка в обработке callback: ${finalError.message}`);
+        }
       }
     }
-
-    // Всегда отвечаем на callback-запрос, чтобы убрать состояние загрузки
-    if (!ctx.callbackQuery.answered) {
-      await ctx.answerCallbackQuery();
+  } catch (criticalError) {
+    logger.error(`Критическая ошибка при обработке callback_query: ${criticalError.message}`, criticalError.stack);
+    try {
+      await ctx.answerCallbackQuery({
+        text: "Произошла критическая ошибка",
+        show_alert: true,
+      });
+    } catch (finalError) {
+      logger.error(`Не удалось ответить на callback_query: ${finalError.message}`);
     }
-  } catch (error) {
-    await ErrorHandler.handle(ctx, error, "callback_query");
-    await ctx.answerCallbackQuery({
-      text: `Ошибка: ${error.message}`,
-      show_alert: true,
-    });
   }
 });
 
@@ -209,19 +238,43 @@ bot.catch((err) => {
   logger.error("Необработанная ошибка бота:", err);
 });
 
+// Добавим обработчики для предотвращения завершения скрипта
+process.on("SIGINT", () => {
+  logger.info("Получен сигнал SIGINT, завершение работы...");
+  process.exit(0);
+});
+
+process.on("SIGTERM", () => {
+  logger.info("Получен сигнал SIGTERM, завершение работы...");
+  process.exit(0);
+});
+
 // Запуск бота с инициализацией медиа
 async function startBot() {
   try {
     logger.info(`Инициализация медиа-файлов...`);
-    await initializeMedia();
+    try {
+      await initializeMedia();
+    } catch (mediaError) {
+      logger.error(`Ошибка при инициализации медиа-файлов: ${mediaError.message}`, mediaError.stack);
+      logger.warn('Продолжаем запуск бота без инициализации медиа-файлов');
+    }
     
     logger.info(`Запуск бота ${config.service.name}...`);
-    await bot.start();
-    
-    logger.info(`Бот ${config.service.name} успешно запущен`);
-    return true;
+    try {
+      await bot.start({
+        drop_pending_updates: true, // Игнорируем обновления, накопившиеся за время остановки
+        allowed_updates: ["message", "callback_query"] // Ограничиваем типы обновлений
+      });
+      
+      logger.info(`Бот ${config.service.name} успешно запущен`);
+    } catch (startError) {
+      logger.error(`Ошибка при запуске бота: ${startError.message}`, startError.stack);
+      return false;
+    }
+    // Не возвращаем true, чтобы функция не завершалась
   } catch (error) {
-    logger.error(`Ошибка при запуске бота: ${error.message}`);
+    logger.error(`Критическая ошибка при запуске бота: ${error.message}`, error.stack);
     return false;
   }
 }

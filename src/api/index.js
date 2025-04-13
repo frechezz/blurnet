@@ -8,6 +8,7 @@ module.exports = {
   // Методы авторизации
   login: () => authAPI.login(),
   getToken: () => authAPI.getToken(),
+  testConnection: () => authAPI.testConnection(),
 
   // Методы работы с пользователями
   getInboundUuid: () => usersAPI.getInboundUuid(),

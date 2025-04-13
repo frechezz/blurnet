@@ -25,11 +25,12 @@ module.exports = {
 
   // API credentials
   api: {
-    url: "https://panel.blurnet.ru",
-    username: process.env.USERNAME,
-    password: process.env.PASSWORD,
-    cookie: process.env.COOKIE,
+    url: process.env.API_URL,
+    username: process.env.API_USERNAME,
+    password: process.env.API_PASSWORD,
+    cookie: process.env.API_COOKIE,
     inboundTag: "Steal", // Тег инбаунда для создания пользователей
+    defaultInboundUuid: process.env.DEFAULT_INBOUND_UUID || "", // UUID инбаунда по умолчанию, если не удалось получить
   },
 
   // Payment info

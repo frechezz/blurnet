@@ -4,7 +4,7 @@ const config = require("../../config");
 const api = require("../api");
 const logger = require("../utils/logger");
 const { getMainKeyboard, getTariffsInlineKeyboard } = require("../keyboards");
-const { getTariff, getDefaultTariffName } = require("../constants/tariffs");
+const { getTariff, getDefaultTariffName, calculateExpireDate } = require("../constants/tariffs");
 const { getUsers } = require("../data/users");
 
 /**
@@ -38,35 +38,69 @@ async function handleApproval(ctx, bot, userId, tariff) {
     logger.info(`Сгенерировано имя пользователя: ${username}`);
 
     // Создаем пользователя в системе через API
-    let subscriptionUrl = ""; // Инициализируем пустой строкой
+    let userResponse = null; // Переменная для хранения ответа от API
 
     try {
+      // Шаг 1: Получение токена
+      logger.info(`[AdminController] Получение токена для создания пользователя ${userId}`);
+      const token = await api.getToken();
+
       // Определяем ключ тарифа на основе названия
       const tariffKey =
         Object.values(require("../constants/tariffs").TARIFFS).find(
           (t) => t.name === tariff,
         )?.key || "tariff_month";
 
-      // Создаем пользователя с указанием тарифа
-      logger.info(
-        `Вызов API createUser с тарифом: ${tariff}, key=${tariffKey}`,
-      );
-      const userResponse = await api.createUser(username, userId, tariffKey);
-      logger.info(`Пользователь успешно создан: ${userResponse.uuid}`);
+      // Шаг 2: Подготовка данных пользователя
+      logger.info(`[AdminController] Подготовка данных пользователя ${username} для тарифа ${tariffKey}`);
+      const expireDate = calculateExpireDate(tariffKey);
+      const userData = {
+        username: username,
+        telegramId: userId,
+        trafficLimitBytes: 0, // Или взять из настроек тарифа, если нужно
+        trafficLimitStrategy: "NO_RESET", // Или из настроек тарифа
+        expireAt: expireDate.toISOString(),
+        status: "ACTIVE",
+        activateAllInbounds: true,
+        description: `Тариф: ${tariffKey}`,
+        // Убираем поля, которые должны генерироваться API или не обязательны
+        // subscriptionUuid: null,
+        // shortUuid: null,
+        // trojanPassword: null,
+        // vlessUuid: null,
+        // ssPassword: null,
+        activeUserInbounds: [], // Оставляем, если API это требует
+        // createdAt: null,
+        // lastTrafficResetAt: null,
+        // email: null,
+      };
 
-      // Получаем персональную ссылку на подписку пользователя
-      if (userResponse.subscriptionUrl) {
-        subscriptionUrl = userResponse.subscriptionUrl;
-        logger.info(`Получен URL подписки из API: ${subscriptionUrl}`);
-      } else {
-        logger.warn(
-          `API не вернул subscriptionUrl. Будет использована пустая ссылка.`,
-        );
-      }
+      // Шаг 3: Создание пользователя через API
+      logger.info(
+        `[AdminController] Вызов api.createUser для ${username} с тарифом: ${tariff}, key=${tariffKey}`,
+      );
+      userResponse = await api.createUser(token, userData);
+      logger.info(`[AdminController] Пользователь ${username} успешно создан: ${userResponse.uuid}`);
+
     } catch (apiError) {
       logger.error(
-        `Ошибка при создании пользователя в API: ${apiError.message}`,
+        `[AdminController] Ошибка при создании пользователя в API для ${userId}: ${apiError.message}`,
+        apiError.stack
       );
+      // Уведомляем администратора об ошибке
+      await ctx.reply(`⚠️ Ошибка при создании пользователя ${username} в API: ${apiError.message}. Проверьте логи.`);
+      // Не отправляем сообщение пользователю в случае ошибки API
+      return; // Прерываем выполнение функции
+    }
+
+    // Если создание пользователя прошло успешно, получаем URL подписки
+    let subscriptionUrl = userResponse?.subscriptionUrl || "";
+
+    // Логируем полученный URL (или его отсутствие)
+    if (subscriptionUrl) {
+      logger.info(`[AdminController] Получен URL подписки из API: ${subscriptionUrl}`);
+    } else {
+      logger.warn(`[AdminController] API не вернул subscriptionUrl для пользователя ${username}.`);
     }
 
     // Отправляем пользователю сообщение об успешной оплате

@@ -24,6 +24,9 @@ function getTariffsInlineKeyboard() {
     .row()
     .text("🏆12 месяцев", "tariff_year")
     .text("🥇6 месяцев", "tariff_halfyear")
+
+
+    
     .text("🥈3 месяца", "tariff_quarter")
     .row()
     .text("🥉1 месяц", "tariff_month")
@@ -79,8 +82,8 @@ function getAdminInlineKeyboard(userId, tariff) {
 function getInstructionInlineKeyboard() {
   return new InlineKeyboard()
     .row()
-    .url("Сапорт", config.urls.support)
-    .url("Новости", config.urls.news);
+    .url("Сапорт", `https://t.me/${config.service.supportUsername}`)
+    .url("Новости", `https://t.me/${config.service.newsChannel}`);
 }
 
 module.exports = {

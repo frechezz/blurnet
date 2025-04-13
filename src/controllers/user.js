@@ -10,7 +10,7 @@ const {
   getPaymentInlineKeyboard,
   getReturnTariffInlineKeyboard,
 } = require("../keyboards");
-const { getTariff } = require("../constants/tariffs");
+const { getTariff, calculateExpireDate } = require("../constants/tariffs");
 const api = require("../api");
 const { hasUsedTrial, markTrialUsed } = require("../data/users");
 const logger = require("../utils/logger");
@@ -147,72 +147,125 @@ async function handleTrialActivation(ctx, userId, tariffKey) {
     logger.info(`Генерация имени пользователя: ${username}`);
 
     try {
-      // Создаем пользователя в системе через API
-      logger.info(
-        `Создание пользователя с пробным периодом: ${username}, тариф: ${tariffKey}`,
-      );
-      const userResponse = await api.createUser(username, userId, tariffKey);
-      logger.info(
-        `Пользователь с пробным периодом создан: ${userResponse.uuid}`,
-      );
+      // Шаг 1: Получение токена
+      logger.info(`[Controller] Получение токена для пользователя ${userId}`);
+      const token = await api.getToken();
+      logger.info(`[Controller] Токен получен`);
+
+      // Шаг 3: Подготовка данных пользователя
+      logger.info(`[Controller] Подготовка данных пользователя ${username} для пробного периода`);
+      const expireDate = calculateExpireDate(tariffKey);
+      const userData = {
+        username: username,
+        telegramId: userId,
+        trafficLimitBytes: 0,
+        trafficLimitStrategy: "NO_RESET",
+        expireAt: expireDate.toISOString(),
+        status: "ACTIVE",
+        activateAllInbounds: true,
+        description: `Тариф: ${tariffKey}`,
+        activeUserInbounds: [],
+      };
+      logger.info(`[Controller] Данные пользователя подготовлены для ${username}`);
+      logger.debug(`[Controller] UserData: ${JSON.stringify(userData)}`);
+
+      // Шаг 4: Создание пользователя через API
+      logger.info(`[Controller] Вызов api.createUser для ${username}`);
+      const userResponse = await api.createUser(token, userData);
+      logger.info(`[Controller] Пользователь ${username} создан: ${userResponse?.uuid || 'UUID не получен'}`);
 
       // Получаем URL подписки напрямую из ответа API
-      const subscriptionUrl = userResponse.subscriptionUrl;
+      let subscriptionUrl = userResponse?.subscriptionUrl;
+
+      // Если URL не получен из API, генерируем его сами
+      if (!subscriptionUrl && userResponse?.uuid) {
+        // Получаем короткий UUID (первые 8 символов)
+        const shortUuid = userResponse.uuid.split('-')[0];
+        subscriptionUrl = `${config.urls.subscription}${shortUuid}/singbox`;
+        logger.info(`URL подписки сгенерирован вручную: ${subscriptionUrl}`);
+      }
 
       if (subscriptionUrl) {
-        logger.info(`Получен URL подписки из API: ${subscriptionUrl}`);
+        logger.info(`Получен URL подписки: ${subscriptionUrl}`);
       } else {
-        logger.warn(`API не вернул subscriptionUrl для пробного периода`);
+        logger.warn(`API не вернул subscriptionUrl для пробного периода и не удалось сгенерировать URL`);
       }
 
       // Отмечаем пользователя как использовавшего пробный период
-      markTrialUsed(userId, ctx.from.username || `user_${userId}`);
+      try {
+        markTrialUsed(userId, ctx.from.username || `user_${userId}`);
+      } catch (markError) {
+        logger.error(`Ошибка при отметке использования пробного периода: ${markError.message}`);
+        // Продолжаем выполнение даже в случае ошибки
+      }
 
       // Отправляем сообщение об активации пробного периода
-      await ctx.reply(
-        messages.trial.activated +
-          (subscriptionUrl
-            ? `\n\n👀 <a href='${subscriptionUrl}'>Подписка</a>`
-            : ""),
-        {
-          parse_mode: "HTML",
-          disable_web_page_preview: true,
-          reply_markup: getReturnTariffInlineKeyboard(),
-        },
-      );
+      try {
+        await ctx.reply(
+          messages.trial.activated +
+            (subscriptionUrl
+              ? `\n\n👀 <a href='${subscriptionUrl}'>Подписка</a>`
+              : ""),
+          {
+            parse_mode: "HTML",
+            disable_web_page_preview: true,
+            reply_markup: getReturnTariffInlineKeyboard(),
+          },
+        );
+      } catch (replyError) {
+        logger.error(`Ошибка при отправке сообщения пользователю: ${replyError.message}`);
+      }
 
       // Уведомление администратора
-      const adminMessage = messages.admin.trial_activated
-        .replace(
-          "{username}",
-          ctx.from.username ? "@" + ctx.from.username : "не указан",
-        )
-        .replace("{userId}", ctx.from.id);
+      try {
+        const adminMessage = messages.admin.trial_activated
+          .replace(
+            "{username}",
+            ctx.from.username ? "@" + ctx.from.username : "не указан",
+          )
+          .replace("{userId}", ctx.from.id);
 
-      await ctx.api.sendMessage(config.bot.adminId, adminMessage);
+        await ctx.api.sendMessage(config.bot.adminId, adminMessage);
+      } catch (adminMsgError) {
+        logger.error(`Ошибка при отправке сообщения администратору: ${adminMsgError.message}`);
+      }
     } catch (apiError) {
-      logger.error(`Ошибка при создании пробного периода: ${apiError.message}`);
+      // Логируем ошибку со стеком вызовов
+      logger.error(`[Controller] Ошибка при активации пробного периода для ${userId}: ${apiError.message}`, apiError.stack);
 
       // Отправляем сообщение об ошибке пользователю
-      await ctx.reply(messages.trial.error, {
-        parse_mode: "HTML",
-        reply_markup: getReturnTariffInlineKeyboard(),
-      });
+      try {
+        await ctx.reply(messages.trial.error, {
+          parse_mode: "HTML",
+          reply_markup: getReturnTariffInlineKeyboard(),
+        });
+      } catch (replyError) {
+        logger.error(`Не удалось отправить сообщение об ошибке пользователю: ${replyError.message}`);
+      }
 
       // Уведомление администратора об ошибке
-      const errorMessage = messages.admin.trial_error
-        .replace(
-          "{username}",
-          ctx.from.username ? "@" + ctx.from.username : "не указан",
-        )
-        .replace("{userId}", ctx.from.id)
-        .replace("{error}", apiError.message);
+      try {
+        const errorMessage = messages.admin.trial_error
+          .replace(
+            "{username}",
+            ctx.from.username ? "@" + ctx.from.username : "не указан",
+          )
+          .replace("{userId}", ctx.from.id)
+          .replace("{error}", apiError.message);
 
-      await ctx.api.sendMessage(config.bot.adminId, errorMessage);
+        await ctx.api.sendMessage(config.bot.adminId, errorMessage);
+      } catch (adminMsgError) {
+        logger.error(`Не удалось отправить сообщение об ошибке администратору: ${adminMsgError.message}`);
+      }
     }
   } catch (error) {
-    logger.error(`Ошибка в handleTrialActivation: ${error.message}`);
-    await ctx.reply(messages.errors.general);
+    // Логируем критическую ошибку со стеком вызовов
+    logger.error(`[Controller] Критическая ошибка в handleTrialActivation для ${userId}: ${error.message}`, error.stack);
+    try {
+      await ctx.reply(messages.errors.general);
+    } catch (replyError) {
+      logger.error(`Не удалось отправить сообщение об ошибке: ${replyError.message}`);
+    }
   }
 }
 
